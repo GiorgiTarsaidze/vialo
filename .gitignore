@@ -1,0 +1,21 @@
+# Secrets and local environment
+.env*
+!.env.example
+
+# Private local notes
+.tmp/
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+
+# Logs and local tooling
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# Large local Kiro evidence captures
+docs/kiro-evidence/raw/
