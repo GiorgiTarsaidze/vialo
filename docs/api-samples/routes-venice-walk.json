@@ -1,34 +1,32 @@
-[{
-  "originIndex": 1,
-  "destinationIndex": 1,
-  "status": {},
-  "duration": "0s",
-  "condition": "ROUTE_EXISTS"
-}
-,
-{
-  "originIndex": 0,
-  "destinationIndex": 0,
-  "status": {},
-  "duration": "0s",
-  "condition": "ROUTE_EXISTS"
-}
-,
-{
-  "originIndex": 0,
-  "destinationIndex": 1,
-  "status": {},
-  "distanceMeters": 592,
-  "duration": "518s",
-  "condition": "ROUTE_EXISTS"
-}
-,
-{
-  "originIndex": 1,
-  "destinationIndex": 0,
-  "status": {},
-  "distanceMeters": 592,
-  "duration": "508s",
-  "condition": "ROUTE_EXISTS"
-}
+[
+  {
+    "originIndex": 1,
+    "destinationIndex": 1,
+    "status": {},
+    "duration": "0s",
+    "condition": "ROUTE_EXISTS"
+  },
+  {
+    "originIndex": 0,
+    "destinationIndex": 0,
+    "status": {},
+    "duration": "0s",
+    "condition": "ROUTE_EXISTS"
+  },
+  {
+    "originIndex": 0,
+    "destinationIndex": 1,
+    "status": {},
+    "distanceMeters": 592,
+    "duration": "518s",
+    "condition": "ROUTE_EXISTS"
+  },
+  {
+    "originIndex": 1,
+    "destinationIndex": 0,
+    "status": {},
+    "distanceMeters": 592,
+    "duration": "508s",
+    "condition": "ROUTE_EXISTS"
+  }
 ]
