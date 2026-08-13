@@ -194,6 +194,8 @@ Example information order:
 - A stop affected by a time constraint receives a small clock icon plus text. Icons never replace labels.
 - Dropped stops never disappear silently. Show a separate “Couldn’t fit” section with a plain-language reason grounded in time or opening-hour data.
 - Place photos are optional and subordinate. Missing photos must not break row height or alignment.
+- When a Places photo is shown, render its returned author attribution in a readable linked credit; never strip or obscure attribution data.
+- Label visit duration as estimated in the stop's supporting metadata without weakening the primary time hierarchy.
 - The active stop may highlight both its timeline marker and map pin. Hover, focus, and tap states must stay synchronized.
 - Keep the timeline readable with photos disabled; its structure comes from type, spacing, and the time rail.
 

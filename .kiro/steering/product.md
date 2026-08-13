@@ -26,7 +26,7 @@ Any chatbot can emit a Google Maps URL. That was tested and confirmed. The link 
 
 2. **Optimize the order.** A language model guesses a plausible sequence. Vialo computes a real travel-time matrix from the Google Routes API and solves it exactly — provably shortest, not plausible-looking.
 
-3. **Make the day fit.** Real visit durations + real opening hours + real travel times = a schedule that either works or gets explicitly diagnosed. "This is 6.5 hours of walking; you have 5 — here's what I cut, and here's why stop 7 moved earlier." A chatbot silently produces a broken day and confidently tells you it's fine.
+3. **Make the day fit.** Explicit visit-duration estimates + real opening hours + real travel times = a schedule that either works or gets explicitly diagnosed. "This is 6.5 hours of walking; you have 5 — here's what I cut, and here's why stop 7 moved earlier." A chatbot silently produces a broken day and confidently tells you it's fine.
 
 ## Frozen scope — 4 features, nothing else
 

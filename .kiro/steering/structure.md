@@ -42,7 +42,6 @@ vialo/
 │   ├── tests/
 │   │   ├── unit/           # pure logic tests (solver, URL builder, validation)
 │   │   └── integration/    # tests against API fixtures
-│   ├── fixtures/           # recorded API responses from Phase 1 validation
 │   ├── package.json
 │   └── tsconfig.json
 ├── infra/                  # IaC (CDK or SAM template)
@@ -106,7 +105,7 @@ npm test
 
 ### Fixtures
 
-Recorded API responses from the Phase 1 validation gate live in `backend/fixtures/`. Tests use these as mock responses to verify pipeline logic without real API calls. This ensures nothing is simulated — the fixtures are real responses, and the logic is tested against them.
+Recorded API responses from the validation gate live in `docs/api-samples/` as the single canonical copies. Backend integration tests load these files directly; do not duplicate them under `backend/`. They are real sanitized responses used through mocked HTTP boundaries, so tests stay deterministic without presenting mock data as a production feature.
 
 ## Import conventions
 

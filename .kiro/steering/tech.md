@@ -31,17 +31,22 @@ Do **not** use Places API for discovery. It's expensive, slow, and worse than th
 For each candidate, call Google Places `searchText` to resolve:
 - `place_id` (the ground truth identifier)
 - Coordinates (`location`)
-- `regularOpeningHours` (periods for the requested day)
-- `photos` (first reference for display)
-- The verified place identity used alongside a typed visit duration
+- `currentOpeningHours` with date-specific periods when available
+- `regularOpeningHours` as the recurring weekly fallback
+- The place timezone needed to interpret local opening and schedule times
+- `photos`, preserving every returned `authorAttributions` entry when a photo is displayed
 
-Visit duration is required scheduling input, but the validated Places fields do not yet establish which response field supplies it. The itinerary-engine spec must resolve this from the recorded Phase 1 fixture. Do not assume `editorialSummary` contains a duration, and never present an estimated duration as Places-verified data.
+The validated Places response contains no typical-visit-duration field. Visit duration is therefore a typed **estimate** proposed in Claude's structured candidate output, schema-validated and bounded to a documented category range. Keep its provenance explicit in the response model and UI; never label it as Places-verified or measured data.
 
-Results are **cached in DynamoDB** keyed by normalized place identity and locality. Define separate freshness rules for stable place data and opening hours in the itinerary-engine spec; do not serve stale opening hours merely because coordinates remain valid.
+For opening hours, prefer `currentOpeningHours` when it contains the requested date; its periods include explicit calendar dates. Otherwise use `regularOpeningHours` for that local weekday. If neither is usable, invoke the specified missing-hours behavior rather than inventing availability.
+
+Results are **cached in DynamoDB** keyed by normalized place identity and locality. Define separate freshness rules for stable place data, date-specific opening hours, and recurring hours; do not serve stale hours merely because coordinates remain valid.
 
 ### Step 3 — Routes API computes the travel-time matrix
 
-One call to `computeRouteMatrix` with all grounded stops as both origins and destinations. For 9 stops: 9×9 = 81 elements, one API call. Returns real walking (or driving) durations in seconds.
+One call to `computeRouteMatrix` with all grounded stops as both origins and destinations. For 9 stops: 9×9 = 81 elements, one call. Request `originIndex`, `destinationIndex`, `status`, `condition`, `distanceMeters`, and `duration`.
+
+Treat the matrix as **directed**. The validated walking fixture returned 518 seconds in one direction and 508 seconds in the reverse direction for the same 592-meter pair. Store and evaluate every `[origin][destination]` element independently; never mirror one triangular half or assume symmetry.
 
 ### Step 4 — Exact ordering with time-window constraints
 
