@@ -28,15 +28,18 @@ The result should communicate its value before the user reads explanatory copy. 
 
 ### Character
 
-- Warm off-white canvas rather than pure white
-- Near-black ink for clarity
-- Deep teal as the primary route and action color
-- Terracotta as a limited accent and the naive-route color
-- Fine borders, restrained shadows, and generous corner radii
+- A luminous warm-cream canvas with clean white working surfaces
+- Warm charcoal ink for clarity; never brown body copy or low-contrast pastel text
+- Deep warm plum as the primary action and optimized-route color
+- Warm coral as the naive-route color
+- Pastel butter yellow, blush pink, and soft lilac used as quiet supporting fields, never as a rainbow
+- Fine warm borders, restrained shadows, and generous corner radii
 - Place photography used as evidence, not as full-screen decoration
 - Route lines, time rails, and compact numeric labels create the geographic/scheduling identity
 
-Avoid gradients, glassmorphism, neon colors, oversized dashboard cards, chat bubbles, and decorative map-pin clichés.
+Aim for roughly 80% cream/white foundations, 10% dark ink and plum structure, and 10% pastel emphasis. Visual impact comes from composition, the route reveal, confident scale, and operational precision—not from adding controls or decoration.
+
+Avoid gradients, glassmorphism, neon colors, cool corporate blues, oversized dashboard cards, chat bubbles, and decorative map-pin clichés.
 
 ### Typography
 
@@ -68,32 +71,37 @@ On screens below 640 px, reduce `display-xl` to `display-lg`; do not reduce body
 
 ```css
 :root {
-  --color-canvas: #f7f4ed;
-  --color-surface: #fffdf8;
+  --color-canvas: #fff8ea;
+  --color-surface: #fffcf5;
   --color-surface-strong: #ffffff;
-  --color-ink: #17201e;
-  --color-ink-muted: #5f6b67;
-  --color-border: #d9ded8;
-  --color-border-strong: #aeb8b3;
+  --color-ink: #2b2326;
+  --color-ink-muted: #6d6064;
+  --color-border: #e7d8d1;
+  --color-border-strong: #bfaaa4;
 
-  --color-primary: #0f6258;
-  --color-primary-hover: #0b5048;
-  --color-primary-soft: #dcece7;
+  --color-primary: #6f3e59;
+  --color-primary-hover: #593047;
+  --color-primary-soft: #f2e2ea;
 
-  --color-naive: #b6553d;
-  --color-naive-soft: #f3dfd8;
-  --color-optimized: #0f6258;
-  --color-optimized-soft: #dcece7;
+  --color-accent-sun: #d89b2b;
+  --color-accent-sun-soft: #fff0c2;
+  --color-accent-blush: #f8e3e7;
+  --color-accent-lilac: #eee6f2;
 
-  --color-warning: #9a6500;
-  --color-warning-soft: #fff1cc;
-  --color-danger: #a43e3e;
-  --color-danger-soft: #f8dddd;
-  --color-success: #28734c;
-  --color-focus: #1769aa;
+  --color-naive: #a95242;
+  --color-naive-soft: #f7e2da;
+  --color-optimized: #6f3e59;
+  --color-optimized-soft: #f2e2ea;
 
-  --color-map-land: #eeeae0;
-  --color-map-water: #cfe2e4;
+  --color-warning: #8a5b00;
+  --color-warning-soft: #fff0c2;
+  --color-danger: #9a3f50;
+  --color-danger-soft: #f8dde4;
+  --color-success: #456a50;
+  --color-focus: #6a4fa3;
+
+  --color-map-land: #f4ebdd;
+  --color-map-water: #e7e1f2;
   --color-map-road: #ffffff;
 }
 ```
@@ -101,8 +109,10 @@ On screens below 640 px, reduce `display-xl` to `display-lg`; do not reduce body
 Rules:
 
 - Body text uses `ink`; secondary text uses `ink-muted` only at AA-compliant sizes.
-- Primary actions and the optimized route use deep teal consistently.
-- The naive route uses terracotta, a dashed line, and an explicit label; the optimized route uses teal, a solid line, and a heavier stroke. Color is never the only distinction.
+- Primary actions and the optimized route use deep plum consistently.
+- Butter, blush, and lilac are background emphasis only. Never place muted or white body text directly on these fills without a verified AA contrast pair.
+- Use at most two supporting pastel families in one viewport so the interface remains composed rather than playful or busy.
+- The naive route uses warm coral, a dashed line, and an explicit label; the optimized route uses plum, a solid line, and a heavier stroke. Color is never the only distinction.
 - Warning and danger colors are reserved for infeasibility and errors, not decoration.
 - Google Maps attribution and controls must remain visible and unobscured.
 
@@ -139,7 +149,7 @@ Use 16 px mobile page gutters, 24–32 px tablet gutters, and a centered 1200 px
 Prefer borders over shadows. Use one restrained floating elevation only for the prompt composer or sticky mobile action:
 
 ```css
---shadow-floating: 0 12px 32px rgb(23 32 30 / 0.12);
+--shadow-floating: 0 12px 32px rgb(43 35 38 / 0.12);
 ```
 
 ## Layout rules
@@ -220,8 +230,8 @@ The naive baseline is the grounded candidate stops in the order returned before 
   - `Naive order — 8.4 km · 1 hr 42 min walking`
   - `Vialo order — 5.1 km · 1 hr 04 min walking`
 - One map showing both routes over the same bounds:
-  - Naive: terracotta, 3 px dashed line, lower opacity
-  - Optimized: teal, 5 px solid line, full opacity
+  - Naive: warm coral, 3 px dashed line, lower opacity
+  - Optimized: deep plum, 5 px solid line, full opacity
 - Matching labeled legends and metrics; do not rely on route color alone
 - A compact feasibility badge when relevant: `Misses closing time` versus `Fits 09:00–19:00`
 
@@ -261,7 +271,7 @@ Every interactive component must define: default, hover, active, focus-visible, 
 
 - Minimum touch target: 44 × 44 px
 - Visible focus ring: 2 px `focus` with 2 px offset
-- Primary action: deep teal fill, white label
+- Primary action: deep plum fill, white label
 - Secondary action: surface fill, strong border, ink label
 - Links are underlined in prose; navigation/action links may use a clear icon plus text
 - Loading skeletons must match the eventual layout to prevent jumps

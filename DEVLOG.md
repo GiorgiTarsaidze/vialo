@@ -34,3 +34,22 @@ Real responses were captured under `docs/api-samples/` and validated before spec
 - Include place timezone data in production grounding so local opening periods and user-entered times are interpreted correctly.
 - Define the bounded category ranges used to validate model-proposed visit-duration estimates.
 - Define how real route polylines for the naive and optimized map comparison are obtained; a duration matrix alone does not contain geometry.
+
+## 2026-08-15 — Agent-led visual workflow and AWS certificate
+
+### Completed
+
+- Configured the workspace to run the exact `@playwright/mcp@0.0.79` release for browser-based UI inspection.
+- Added a project-local `ui-reviewer` Kiro agent and five progressive skills covering visual identity, mobile UX, route comparison, accessibility, and judge-first-impression review.
+- Added lightweight hooks for repository safety plus frontend lint/typecheck validation once the frontend package exists.
+- Replaced the cool teal direction with a light, warm system built from cream and white foundations, warm charcoal, deep plum, warm coral, and restrained butter, blush, and lilac fields.
+- Verified core palette contrast pairs at 5.29:1–14.49:1.
+- Verified the ACM certificate for `vialo.place` and `*.vialo.place` is issued after DNS validation.
+
+### Kiro correction
+
+The first reviewer startup exposed that a workspace MCP configuration was available to the default agent but was not inherited by the custom reviewer. The reviewer initially loaded only its built-in tools. Binding the same pinned Playwright server directly in the agent configuration fixed the gap; a second startup check exposed 23 browser tools, including viewport resize, accessibility snapshots, and screenshots.
+
+### Design decision
+
+The visual workflow will be agent-led rather than dependent on Figma. Visual impact must come from immediate hierarchy, the honest route-comparison reveal, the scheduled timeline, confident typography, and precise motion—not from extra controls, decorative effects, or dashboard complexity. Playwright evidence at mobile and desktop widths is required before a visual pass is claimed.
