@@ -57,8 +57,12 @@ def _select_unambiguous_result(
 ) -> PlacesSearchResult | None:
     """Prefer exact/local results and reject close competing matches."""
     query_norm = _normalized_text(query)
-    query_tokens = set(query_norm.split())
     locality_tokens = {token for token in _normalized_text(locality).split() if len(token) >= 3}
+    # A user or selector may qualify an origin as "Place, Locality". The
+    # locality belongs in address matching, not canonical place-name scoring.
+    name_query_parts = [token for token in query_norm.split() if token not in locality_tokens]
+    name_query_norm = " ".join(name_query_parts) or query_norm
+    query_tokens = set(name_query_parts) or set(query_norm.split())
     ranked: list[tuple[tuple[int, int, float, float], PlacesSearchResult]] = []
 
     for result in results:
@@ -66,14 +70,14 @@ def _select_unambiguous_result(
             continue
         name_norm = _normalized_text(result.display_name)
         name_tokens = set(name_norm.split())
-        exact = int(name_norm == query_norm)
+        exact = int(name_norm == name_query_norm)
         locality_match = int(
             bool(locality_tokens & set(_normalized_text(result.formatted_address).split()))
         )
         token_coverage = (
             len(query_tokens & name_tokens) / len(query_tokens) if query_tokens else 0.0
         )
-        similarity = SequenceMatcher(None, query_norm, name_norm).ratio()
+        similarity = SequenceMatcher(None, name_query_norm, name_norm).ratio()
         ranked.append(((exact, locality_match, token_coverage, similarity), result))
 
     if not ranked:

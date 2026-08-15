@@ -11,7 +11,7 @@ inclusion: always
 | Frontend | React SPA (TypeScript) | Design-heavy, mobile-first. Deployed to S3 + CloudFront. |
 | Backend | AWS Lambda (Python 3.12, API Gateway HTTP API, Lambda Powertools) | Small validated API surface for planning and anonymous shares. No server to manage. |
 | Storage | DynamoDB | Explicit anonymous shares, split-freshness place cache, and HMAC-keyed request limits. No relational needs. |
-| AI | Provider-isolated candidate selector; Anthropic Claude in production | Pydantic-validated structured candidates. No model prose is rendered to the user. |
+| AI | Provider-isolated candidate selector; AWS Bedrock Claude Sonnet 4.6 in production | Pydantic-validated structured candidates. No model prose is rendered to the user. |
 | Maps | Google Maps Platform (Places API New, Routes API, Maps JavaScript API) | Grounding, travel-time matrix, map preview, and the handoff. |
 | Hosting | S3 + CloudFront + ACM cert on `vialo.place` | HTTPS enforced, global CDN. |
 | DNS | Cloudflare (DNS-only, grey cloud) | Points at CloudFront distribution. |
@@ -26,7 +26,7 @@ Claude receives the user's natural-language request (city, time budget, interest
 
 Do **not** use Places API for discovery. It's expensive, slow, and worse than the model at cultural/contextual recommendations.
 
-The pipeline depends on a narrow Python `CandidateSelector` protocol, not directly on the Anthropic SDK. The production composition root wires one Claude adapter using a separate server-side `ANTHROPIC_API_KEY` and pinned model ID. This isolates provider code without adding runtime provider selection or an untested fallback.
+The pipeline depends on a narrow Python `CandidateSelector` protocol, not directly on any provider SDK. The production composition root wires one Bedrock Claude adapter using boto3 `bedrock-runtime` Converse and a pinned model ID (`us.anthropic.claude-sonnet-4-6`). This isolates provider code without adding runtime provider selection or an untested fallback.
 
 Do not use `KIRO_API_KEY` in the application. Official Kiro documentation defines it as authentication for headless `kiro-cli chat --no-interactive` sessions; it does not document direct model-provider access. Kiro credits are documented for Kiro requests and agentic requests, so they must not be assumed to fund deployed Vialo inference.
 
@@ -87,7 +87,7 @@ Build a `https://www.google.com/maps/dir/?api=1` URL using documented Maps URL p
 - One Python 3.12 Lambda behind API Gateway HTTP API, exposing planning plus share create/read/delete routes
 - AWS Lambda Powertools `APIGatewayHttpResolver` for routing, structured logging, correlation IDs, and metrics; no FastAPI or Mangum
 - Strict Pydantic v2 models at request, provider, cache, share, and response boundaries; public JSON uses camelCase aliases
-- `httpx` and direct Google REST adapters; Anthropic's Python SDK behind `CandidateSelector`; `boto3` repositories for DynamoDB
+- `httpx` and direct Google REST adapters; boto3 `bedrock-runtime` Converse behind `CandidateSelector`; `boto3` repositories for DynamoDB
 - Standard-library `datetime` and `zoneinfo` for local-time arithmetic with explicit ambiguity/nonexistence checks
 - AWS SAM `infra/template.yaml` for HTTP API, Lambda, DynamoDB, log retention, S3, and CloudFront
 - Environment variables for API keys, model ID, table names, and server-only HMAC secrets; no secrets in payloads or logs
@@ -97,17 +97,18 @@ Build a `https://www.google.com/maps/dir/?api=1` URL using documented Maps URL p
 ### DynamoDB tables
 - `place-cache`: `PLACE#<placeId>` partitions with `PROFILE`, `HOURS#REGULAR`, and `HOURS#DATE#<date>` sort keys; each item has application-checked expiry plus TTL
 - `shared-itineraries`: `SHARE#<randomId>`, stores schema-validated computed itinerary only after an explicit share action plus an HMAC digest of the separate creator deletion token; TTL = 30 days
-- `request-limits`: HMAC-derived IP bucket key, atomic count, and short TTL; never stores a raw IP
+- `request-limits`: HMAC-derived IP bucket key, atomic count, and short TTL; never stores a raw IP. Also stores `BEDROCK_SPEND#YYYY-MM` monthly spend items for the application-level Bedrock hard cap (micro-USD reservation/settlement with DynamoDB conditional updates).
 
 ## Security rules — non-negotiable
 
-1. **API keys server-side only.** The frontend bundle never contains Google or Anthropic credentials. `ANTHROPIC_API_KEY` is separate from Kiro authentication and exists only in Lambda configuration. `KIRO_API_KEY` is never an application runtime secret. The browser key for Maps JS API is referrer-restricted and has only the Maps JavaScript API enabled.
-2. **Structured output only.** The Anthropic adapter returns Pydantic-validated intent and candidate objects through `CandidateSelector`. No model prose is rendered to the page; deterministic Python code grounds, solves, and templates every result.
+1. **API keys server-side only.** The frontend bundle never contains Google or Bedrock credentials. Bedrock access uses IAM roles attached to the Lambda execution role; no API key is stored. `KIRO_API_KEY` is never an application runtime secret. The browser key for Maps JS API is referrer-restricted and has only the Maps JavaScript API enabled.
+2. **Structured output only.** The Bedrock adapter returns Pydantic-validated intent and candidate objects through `CandidateSelector`. No model prose is rendered to the page; deterministic Python code grounds, solves, and templates every result.
 3. **Server-side scope check.** Before calling Claude or any paid API: is this a place-and-time request? Off-topic input gets a canned refusal with zero API spend.
 4. **Per-IP rate limiting.** 5 requests/hour using a DynamoDB atomic counter keyed by a server-HMAC of the IP. Never persist or log the raw IP.
 5. **Input length cap.** Max 500 characters for the user prompt. Reject longer input before processing.
 6. **Never echo user input unescaped.** All text rendered in the frontend is sanitized. React's JSX escaping handles most cases; never use `dangerouslySetInnerHTML`.
 7. **Budget alarms.** AWS Budget + GCP Budget alerts at 50%/90%/100%. A runaway loop must not cost real money.
-8. **No credentials in the repository.** `.env` is gitignored from commit #1. Full git-history secret scan before submission.
-9. **Data minimization.** Process prompts in memory; do not include raw prompts, full IPs, raw provider/model bodies, or secrets in logs or shared itineraries.
-10. **Share capability separation.** Anonymous shares are public to anyone with the URL and expire after 30 days. The creator deletion token is returned separately, never embedded in the public URL, and only its server-HMAC digest is stored.
+8. **Atomic per-call Bedrock hard cap.** A DynamoDB-backed spend limiter atomically reserves micro-USD budget before EVERY Bedrock Converse invocation (including repair). Botocore retries are disabled (`total_max_attempts: 1`) so one reservation = one wire call. Missing or malformed usage retains the full reservation. This is conservative application metering that guarantees no overshoot even under concurrent load, distinct from delayed AWS Budget billing alerts.
+9. **No credentials in the repository.** `.env` is gitignored from commit #1. Full git-history secret scan before submission.
+10. **Data minimization.** Process prompts in memory; do not include raw prompts, full IPs, raw provider/model bodies, or secrets in logs or shared itineraries.
+11. **Share capability separation.** Anonymous shares are public to anyone with the URL and expire after 30 days. The creator deletion token is returned separately, never embedded in the public URL, and only its server-HMAC digest is stored.

@@ -6,13 +6,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAYER_DIR="${SCRIPT_DIR}/layer"
 PYTHON_DIR="${LAYER_DIR}/python"
 
-for package in pydantic anthropic aws_lambda_powertools httpx boto3; do
+for package in pydantic aws_lambda_powertools httpx boto3; do
     test -d "${PYTHON_DIR}/${package}"
 done
 test ! -e "${PYTHON_DIR}/vialo"
 test -f "${LAYER_DIR}/requirements.txt"
 ! grep -Eq '(^|[[:space:]])vialo(@|==|[[:space:]])' "${LAYER_DIR}/requirements.txt"
 grep -q -- '--hash=sha256:' "${LAYER_DIR}/requirements.txt"
+
+# Assert no anthropic package is present (we use boto3 bedrock-runtime directly)
+test ! -d "${PYTHON_DIR}/anthropic"
+! grep -iq 'anthropic' "${LAYER_DIR}/requirements.txt"
 
 native_count=0
 while IFS= read -r -d '' extension; do

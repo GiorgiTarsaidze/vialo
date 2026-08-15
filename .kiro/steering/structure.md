@@ -49,7 +49,7 @@ vialo/
 │   │       │   └── build_maps_handoff.py
 │   │       ├── services/
 │   │       │   ├── candidate_selector.py   # provider-neutral Protocol
-│   │       │   ├── anthropic_selector.py   # production Claude adapter
+│   │       │   ├── bedrock_selector.py      # production Bedrock Claude adapter
 │   │       │   ├── places_client.py        # direct Google REST wrapper
 │   │       │   ├── routes_client.py        # direct Google REST wrapper
 │   │       │   ├── place_cache.py
@@ -94,7 +94,7 @@ vialo/
 - Constants and environment variables: `UPPER_SNAKE_CASE` (`MAX_STOPS`, `CACHE_TTL_SECONDS`).
 - Tests: `test_<module>.py`; test functions describe behavior in `snake_case`.
 - Imports: absolute imports from `vialo`; no wildcard imports and no import-side-effect registration outside the API composition root.
-- Domain modules do not import Anthropic, Google, boto3, Lambda Powertools, or API Gateway types.
+- Domain modules do not import Google, boto3, Lambda Powertools, or API Gateway types.
 
 ### TypeScript frontend
 
@@ -108,7 +108,7 @@ vialo/
 
 - `pyproject.toml` is the source of package metadata and tool configuration.
 - `uv.lock` is committed. Production and development dependencies use exact locked resolutions; Docker is not required for ordinary local tests.
-- Runtime foundation: Pydantic v2, AWS Lambda Powertools, `httpx`, Anthropic's Python SDK, and `boto3`.
+- Runtime foundation: Pydantic v2, AWS Lambda Powertools, `httpx`, and `boto3` (including `bedrock-runtime` Converse for candidate selection).
 - Google Places and Routes use direct REST adapters rather than large generated clients so field masks, timeouts, and payload validation stay explicit.
 - Standard-library `datetime` and `zoneinfo` drive timezone arithmetic; helpers must explicitly detect ambiguous and nonexistent local times.
 - Do not add FastAPI or Mangum. Four HTTP routes do not justify a second web framework over Lambda Powertools routing.
@@ -117,7 +117,7 @@ vialo/
 
 Pydantic models are authoritative for backend request and response validation. Public JSON uses camelCase aliases while Python code uses snake_case. Wave 1 exports a versioned JSON Schema artifact; frontend TypeScript contracts are generated or checked against that schema so the languages cannot drift silently.
 
-The model-backed candidate selection boundary is a Python `Protocol`. Production wires one Anthropic Claude implementation. This is provider-isolated, not a promise of runtime multi-provider selection or automatic fallback.
+The model-backed candidate selection boundary is a Python `Protocol`. Production wires one Bedrock Claude implementation. This is provider-isolated, not a promise of runtime multi-provider selection or automatic fallback.
 
 ## Testing policy
 
@@ -128,7 +128,7 @@ The model-backed candidate selection boundary is a Python `Protocol`. Production
 | Solver | Every permutation rule, time-window feasibility, waits, ties, dropping | pytest unit tests + Hypothesis invariants |
 | Time | IANA conversion, DST ambiguity/nonexistence, split and overnight intervals | pytest parameterization + Hypothesis boundaries |
 | URL builder | Maps URL encoding, 2,048-character guard, overlapping parts | pytest unit tests |
-| Pipeline adapters | Anthropic, Places, Routes, DynamoDB behavior | integration tests with mocked HTTP/AWS boundaries |
+| Pipeline adapters | Bedrock, Places, Routes, DynamoDB behavior | integration tests with mocked HTTP/AWS boundaries |
 | API contract | Pydantic strictness, JSON Schema stability, camelCase response compatibility | contract tests |
 | Frontend | Timeline, comparison, loading/error, sharing states | Vitest + React Testing Library |
 
@@ -171,10 +171,12 @@ Recorded provider responses remain in `docs/api-samples/` as the single canonica
 `.env.example` documents placeholders only:
 
 ```text
-ANTHROPIC_API_KEY=replace-with-server-key
-ANTHROPIC_MODEL_ID=replace-with-supported-model-id
-GOOGLE_PLACES_KEY=replace-with-server-key
-GOOGLE_ROUTES_KEY=replace-with-server-key
+BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6
+BEDROCK_REGION=us-east-1
+BEDROCK_MONTHLY_BUDGET_USD=5.00
+BEDROCK_INPUT_USD_PER_MILLION_TOKENS=4.00
+BEDROCK_OUTPUT_USD_PER_MILLION_TOKENS=20.00
+GOOGLE_SERVER_KEY=replace-with-server-key
 GOOGLE_MAPS_BROWSER_KEY=replace-with-referrer-restricted-browser-key
 DYNAMODB_TABLE_CACHE=vialo-place-cache
 DYNAMODB_TABLE_SHARES=vialo-shared-itineraries

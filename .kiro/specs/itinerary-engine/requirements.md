@@ -6,7 +6,7 @@
 
 ## Purpose
 
-The itinerary engine turns one bounded natural-language request into a grounded, feasible schedule. It uses a model-backed candidate selector only for typed intent and candidate selection, Google Places for place facts, Google Routes for directed travel data and real geometry, and deterministic code for every scheduling decision. The production selector uses Anthropic Claude.
+The itinerary engine turns one bounded natural-language request into a grounded, feasible schedule. It uses a model-backed candidate selector only for typed intent and candidate selection, Google Places for place facts, Google Routes for directed travel data and real geometry, and deterministic code for every scheduling decision. The production selector uses AWS Bedrock Claude Sonnet 4.6.
 
 The engine must never invent a place, opening interval, route, visit duration provenance, or handoff result.
 
@@ -50,7 +50,7 @@ The engine must never invent a place, opening interval, route, visit duration pr
 
 ## Requirement 2 — Typed intent and candidate selection
 
-2.1. THE production Anthropic candidate selector SHALL return schema-validated structured data only. The raw model response SHALL never be rendered to the user.
+2.1. THE production Bedrock candidate selector SHALL return schema-validated structured data only. The raw model response SHALL never be rendered to the user.
 
 2.2. The structured result SHALL include:
 
@@ -85,7 +85,7 @@ The engine must never invent a place, opening interval, route, visit duration pr
 
 2.8. WHEN the requested date is omitted, THE SYSTEM SHALL defer the default until the origin timezone is grounded, then use that timezone's current local date.
 
-2.9. Candidate selection SHALL be accessed through a narrow provider-neutral boundary so deterministic pipeline and domain code do not depend on the Anthropic SDK. The production deployment SHALL wire one Claude implementation; runtime provider switching and automatic model fallback are not required.
+2.9. Candidate selection SHALL be accessed through a narrow provider-neutral boundary so deterministic pipeline and domain code do not depend on provider SDKs. The production deployment SHALL wire one Bedrock Claude implementation; runtime provider switching and automatic model fallback are not required.
 
 ## Requirement 3 — Places grounding and identity
 
@@ -261,13 +261,33 @@ The engine must never invent a place, opening interval, route, visit duration pr
 
 12.5. Request IDs and provider correlation data SHALL NOT be presented as user identifiers.
 
-12.6. API credentials SHALL be loaded only from server-side environment configuration. The Maps JavaScript browser key SHALL remain separately referrer-restricted.
+12.6. API credentials SHALL be loaded only from server-side environment configuration. The Maps JavaScript browser key SHALL remain separately referrer-restricted. Bedrock access uses the Lambda execution IAM role; no Bedrock API key is stored.
 
 12.7. Every response SHALL include a schema version so stored shares remain readable across compatible deployments.
 
+12.8. API Gateway HTTP API SHALL enforce default throttling of 2 requests/second with a burst limit of 5 to protect downstream provider budgets.
+
+## Requirement 13 — Atomic per-Bedrock-call monthly hard cap
+
+13.1. THE SYSTEM SHALL enforce an application-level monthly spend cap on Bedrock inference, independent of (and more conservative than) delayed AWS Budget billing alerts.
+
+13.2. Before EVERY Bedrock Converse invocation, including both initial and repair calls, THE SYSTEM SHALL atomically reserve budget using a DynamoDB conditional update. If the reservation would exceed the monthly cap, THE SYSTEM SHALL raise `AI_BUDGET_EXCEEDED` and make zero Bedrock calls.
+
+13.3. Reservation amounts SHALL be conservative overestimates using configurable per-token rates (default $4/M input, $20/M output) and the full max_output_tokens as worst-case output.
+
+13.4. After a successful Bedrock response with validated usage, THE SYSTEM SHALL settle by refunding the unused reservation portion. If actual cost exceeds the reservation, the overage SHALL be added (never under-accounted).
+
+13.5. WHEN Bedrock usage metadata is missing, malformed (non-int, bool, or negative), THE SYSTEM SHALL retain the full reservation and log a safe warning; it SHALL NOT settle or refund.
+
+13.6. WHEN DynamoDB is unreachable during reservation, THE SYSTEM SHALL raise `SpendLimiterUnavailableError` and make zero Bedrock calls (fail closed).
+
+13.7. The monthly cap SHALL reset on calendar month boundaries via a month-keyed DynamoDB partition.
+
+13.8. Botocore automatic retries SHALL be disabled on the Bedrock client (`total_max_attempts: 1`) so that one reservation maps to exactly one wire invocation.
+
 ## Stable diagnostic codes
 
-`INVALID_INPUT`, `INVALID_DATE`, `INVALID_TIME_WINDOW`, `OFF_TOPIC`, `RATE_LIMITED`, `MODEL_OUTPUT_INVALID`, `ORIGIN_NOT_FOUND`, `PLACE_NOT_FOUND`, `DUPLICATE_PLACE`, `OUTSIDE_LOCALITY`, `HOURS_UNAVAILABLE`, `CLOSED_ON_DATE`, `LOCAL_TIME_AMBIGUOUS`, `ROUTE_NOT_FOUND`, `NO_REACHABLE_STOPS`, `NO_FEASIBLE_ITINERARY`, `COMPARISON_UNAVAILABLE`, `METRICS_DIVERGED`, `HANDOFF_UNAVAILABLE`, `SHARE_NOT_FOUND`, `PROVIDER_UNAVAILABLE`, `INTERNAL_ERROR`.
+`INVALID_INPUT`, `INVALID_DATE`, `INVALID_TIME_WINDOW`, `OFF_TOPIC`, `RATE_LIMITED`, `AI_BUDGET_EXCEEDED`, `MODEL_OUTPUT_INVALID`, `ORIGIN_NOT_FOUND`, `PLACE_NOT_FOUND`, `DUPLICATE_PLACE`, `OUTSIDE_LOCALITY`, `HOURS_UNAVAILABLE`, `CLOSED_ON_DATE`, `LOCAL_TIME_AMBIGUOUS`, `ROUTE_NOT_FOUND`, `NO_REACHABLE_STOPS`, `NO_FEASIBLE_ITINERARY`, `COMPARISON_UNAVAILABLE`, `METRICS_DIVERGED`, `HANDOFF_UNAVAILABLE`, `SHARE_NOT_FOUND`, `PROVIDER_UNAVAILABLE`, `INTERNAL_ERROR`.
 
 ## Phase 2 acceptance gate
 

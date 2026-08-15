@@ -48,23 +48,27 @@
   - Test valid terse prompts, obvious off-topic input, abusive input, and boundary lengths.
   - _Requirements: 1.1–1.4_
 
-- [x] **5. Implement the DynamoDB rate limiter** *(parallel with task 4)*
+- [x] **5. Implement the DynamoDB rate limiter and Bedrock spend limiter** *(parallel with task 4)*
   - HMAC client IP with a server-only salt.
   - Use atomic UTC-hour-bucket updates and expiry.
   - Return retry time after five accepted requests.
+  - Implement atomic per-Bedrock-call monthly hard cap: micro-USD reservation before EVERY initial/repair invocation, settlement after confirmed usage, fail-closed retention on DynamoDB failure or missing/malformed usage.
   - Test concurrency, rollover, expiry, and absence of raw IP storage/logging.
-  - _Requirements: 1.5–1.6, 12.3–12.4_
+  - Test budget cap enforcement, reservation/settlement accounting, and usage validation.
+  - _Requirements: 1.5–1.6, 12.3–12.4, 13_
 
-- [x] **6. Implement the candidate-selector boundary and production Claude adapter**
+- [x] **6. Implement the candidate-selector boundary and production Bedrock Claude adapter**
   - Define a provider-neutral Python `CandidateSelector` protocol and inject it at the composition root.
-  - Implement one Anthropic Claude adapter using the pinned Python SDK, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL_ID`; never use `KIRO_API_KEY` in application runtime.
+  - Implement one Bedrock Claude adapter using boto3 `bedrock-runtime` Converse, pinned `BEDROCK_MODEL_ID` (`us.anthropic.claude-sonnet-4-6`), and the Lambda execution IAM role; never use `KIRO_API_KEY` in application runtime.
+  - Disable botocore automatic retries (`total_max_attempts: 1`) so one spend reservation maps to exactly one wire invocation. Repair is the only allowed second call with its own independent reservation/settlement.
   - Build the schema-constrained request and approved system prompt.
   - Preserve candidate order, priorities, category, duration, and provenance.
   - Verify every `user` duration through an exact prompt span and deterministic duration parser, then strip the evidence.
   - Add one bounded repair attempt for invalid structured output.
-  - Mock the adapter boundary and test invalid schema, excess stops, valid user overrides, fabricated/mismatched duration evidence, timeout mapping, and one repair attempt.
-  - Prove pipeline/domain tests use the protocol and do not import the Anthropic SDK.
-  - _Requirements: 2_
+  - Validate Bedrock `usage` (inputTokens/outputTokens must be real nonneg ints, not bool) before settling; retain full reservation on missing/malformed usage.
+  - Mock the adapter boundary and test invalid schema, excess stops, valid user overrides, fabricated/mismatched duration evidence, timeout mapping, one repair attempt, BotoConfig inspection, and missing/malformed usage retention.
+  - Prove pipeline/domain tests use the protocol and do not import provider SDKs.
+  - _Requirements: 2, 13_
 
 **Wave 2 demo:** A prompt produces validated typed intent and bounded candidates; invalid/off-topic/rate-limited requests stop before paid map calls.
 
@@ -125,14 +129,14 @@
 
 ## Wave 5 — Real geometry and handoff
 
-- [ ] **14. Implement the ordered `computeRoutes` adapter**
+- [x] **14. Implement the ordered `computeRoutes` adapter**
   - Implement the direct `computeRoutes` REST adapter with strict Pydantic parsing; preserve caller order with optimization disabled.
   - Build origin/intermediate/destination fields mechanically for open and return routes, including the zero-intermediate one-stop case.
   - Request high-quality encoded route and leg geometry/metrics with the same departure-time policy and modifiers.
   - Capture and sanitize a real geometry response fixture before claiming integration completion.
   - Test request parity between naive and optimized calls.
   - _Requirements: 9.1–9.5_
-  - _Evidence status: the adapter and request-parity tests are complete; a sanitized live `computeRoutes` fixture remains pending provider credentials. No simulated geometry is used in production._
+  - _Evidence status: complete. `routes-venice-geometry.json` is a sanitized live walking `computeRoutes` response with two legs, 1,526 meters, 1,286 seconds, and a real encoded polyline; integration tests consume the canonical fixture. Live validation also established that walking requests must omit `routingPreference`._
 
 - [x] **15. Build the honest comparison response**
   - Call geometry for the same retained stops in naive and optimized order.

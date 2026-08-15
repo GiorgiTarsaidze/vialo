@@ -41,15 +41,19 @@ from vialo.models.requests import PlanItineraryRequest
 from vialo.pipeline.compute_matrix import compute_matrix
 from vialo.pipeline.compute_route_geometry import RouteGeometry, compute_route_geometry
 from vialo.pipeline.ground_places import ground_origin, ground_places
-from vialo.pipeline.select_stops import select_stops
 from vialo.pipeline.solve_route import solve_route
-from vialo.services.anthropic_selector import AnthropicCandidateSelector
+from vialo.services.bedrock_selector import BedrockCandidateSelector
 from vialo.services.candidate_selector import SelectorError
 from vialo.services.place_cache import PlaceCacheRepository
 from vialo.services.places_client import PlacesClient, PlacesClientError
 from vialo.services.rate_limiter import RateLimiter
 from vialo.services.routes_client import RoutesClient, RoutesClientError
 from vialo.services.share_repository import ShareRepository
+from vialo.services.spend_limiter import (
+    BedrockSpendLimiter,
+    BudgetExceededError,
+    SpendLimiterUnavailableError,
+)
 
 MAX_PROMPT_LENGTH = 500
 
@@ -171,14 +175,36 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             resp.headers = {"Retry-After": str(retry_after)}
         return resp
 
-    # Step 1: Select candidate stops via Claude
-    selector = AnthropicCandidateSelector(
-        api_key=config.anthropic_api_key,
-        model_id=config.anthropic_model_id,
+    # Step 1: Select candidate stops via Bedrock Claude
+    # Construct spend limiter, then selector owns it for per-call reserve/settle
+    spend_limiter = BedrockSpendLimiter(
+        table_name=config.dynamodb_table_rate_limits,
+        monthly_cap_micro_usd=config.bedrock_monthly_budget_micro_usd,
+        input_usd_per_million=config.bedrock_input_usd_per_million,
+        output_usd_per_million=config.bedrock_output_usd_per_million,
+        metrics=metrics,
     )
+
+    selector = BedrockCandidateSelector(
+        spend_limiter=spend_limiter,
+        model_id=config.bedrock_model_id,
+        region_name=config.bedrock_region,
+    )
+
     selection_started = time.perf_counter()
     try:
-        intent = select_stops(selector, prompt)
+        intent = selector.select(prompt)
+    except BudgetExceededError:
+        _record_latency("CandidateSelectionLatency", selection_started)
+        return _error_response(
+            DiagnosticCode.AI_BUDGET_EXCEEDED,
+            "Service temporarily unavailable due to usage limits",
+            429,
+        )
+    except SpendLimiterUnavailableError:
+        _record_latency("CandidateSelectionLatency", selection_started)
+        logger.exception("Spend limiter unavailable")
+        return _error_response(DiagnosticCode.INTERNAL_ERROR, "Server error", 503)
     except SelectorError as error:
         _record_latency("CandidateSelectionLatency", selection_started)
         try:
@@ -203,7 +229,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
     )
 
     # Step 2a: Ground origin separately via Places API
-    places_client = PlacesClient(api_key=config.google_places_key)
+    places_client = PlacesClient(api_key=config.google_server_key)
     origin_started = time.perf_counter()
     try:
         origin = ground_origin(
@@ -338,7 +364,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         )
 
     # Step 3: Compute travel-time matrix
-    routes_client = RoutesClient(api_key=config.google_routes_key)
+    routes_client = RoutesClient(api_key=config.google_server_key)
     matrix_started = time.perf_counter()
     try:
         matrix = compute_matrix(

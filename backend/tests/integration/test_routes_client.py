@@ -22,6 +22,115 @@ def _load_matrix_fixture() -> list[dict[str, Any]]:
         return result
 
 
+def _load_geometry_fixture() -> dict[str, Any]:
+    with open(FIXTURES_DIR / "routes-venice-geometry.json") as f:
+        result: dict[str, Any] = json.load(f)
+        return result
+
+
+class TestRoutingPreferenceByTravelMode:
+    """Regression: routingPreference MUST be omitted for WALK, included for DRIVE.
+
+    Google Routes API returns INVALID_ARGUMENT if routingPreference is set for WALK.
+    """
+
+    @respx.mock
+    def test_walk_matrix_omits_routing_preference(self) -> None:
+        """WALK computeRouteMatrix payload must NOT contain routingPreference."""
+        fixture = _load_matrix_fixture()
+        route = respx.post(
+            "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+        ).respond(200, json=fixture)
+
+        client = RoutesClient(api_key="test-key")
+        client.compute_route_matrix(
+            [Location(latitude=45.0, longitude=12.0)],
+            [Location(latitude=45.0, longitude=12.0)],
+            "WALK",
+        )
+
+        sent_body = json.loads(route.calls[0].request.content)
+        assert "routingPreference" not in sent_body
+        assert sent_body["travelMode"] == "WALK"
+
+    @respx.mock
+    def test_drive_matrix_includes_routing_preference(self) -> None:
+        """DRIVE computeRouteMatrix payload MUST include routingPreference: TRAFFIC_UNAWARE."""
+        fixture = _load_matrix_fixture()
+        route = respx.post(
+            "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+        ).respond(200, json=fixture)
+
+        client = RoutesClient(api_key="test-key")
+        client.compute_route_matrix(
+            [Location(latitude=45.0, longitude=12.0)],
+            [Location(latitude=45.0, longitude=12.0)],
+            "DRIVE",
+        )
+
+        sent_body = json.loads(route.calls[0].request.content)
+        assert sent_body["routingPreference"] == "TRAFFIC_UNAWARE"
+        assert sent_body["travelMode"] == "DRIVE"
+
+    @respx.mock
+    def test_walk_compute_routes_omits_routing_preference(self) -> None:
+        """WALK computeRoutes payload must NOT contain routingPreference."""
+        mock_response = {
+            "routes": [
+                {
+                    "distanceMeters": 1500,
+                    "duration": "1200s",
+                    "polyline": {"encodedPolyline": "abc123"},
+                    "legs": [{"distanceMeters": 1500, "duration": "1200s"}],
+                }
+            ]
+        }
+        route = respx.post("https://routes.googleapis.com/directions/v2:computeRoutes").respond(
+            200, json=mock_response
+        )
+
+        client = RoutesClient(api_key="test-key")
+        client.compute_routes(
+            origin=Location(latitude=45.0, longitude=12.0),
+            intermediates=[],
+            destination=Location(latitude=45.01, longitude=12.01),
+            travel_mode="WALK",
+        )
+
+        sent_body = json.loads(route.calls[0].request.content)
+        assert "routingPreference" not in sent_body
+        assert sent_body["travelMode"] == "WALK"
+
+    @respx.mock
+    def test_drive_compute_routes_includes_routing_preference(self) -> None:
+        """DRIVE computeRoutes payload MUST include routingPreference: TRAFFIC_UNAWARE."""
+        mock_response = {
+            "routes": [
+                {
+                    "distanceMeters": 5000,
+                    "duration": "600s",
+                    "polyline": {"encodedPolyline": "xyz789"},
+                    "legs": [{"distanceMeters": 5000, "duration": "600s"}],
+                }
+            ]
+        }
+        route = respx.post("https://routes.googleapis.com/directions/v2:computeRoutes").respond(
+            200, json=mock_response
+        )
+
+        client = RoutesClient(api_key="test-key")
+        client.compute_routes(
+            origin=Location(latitude=45.0, longitude=12.0),
+            intermediates=[],
+            destination=Location(latitude=45.01, longitude=12.01),
+            travel_mode="DRIVE",
+        )
+
+        sent_body = json.loads(route.calls[0].request.content)
+        assert sent_body["routingPreference"] == "TRAFFIC_UNAWARE"
+        assert sent_body["travelMode"] == "DRIVE"
+
+
 class TestRoutesClientMatrix:
     @respx.mock
     def test_compute_route_matrix(self) -> None:
@@ -72,19 +181,7 @@ class TestRoutesClientRoutes:
     @respx.mock
     def test_compute_routes(self) -> None:
         """Test route computation with polyline."""
-        mock_response = {
-            "routes": [
-                {
-                    "distanceMeters": 1500,
-                    "duration": "1200s",
-                    "polyline": {"encodedPolyline": "abc123"},
-                    "legs": [
-                        {"distanceMeters": 800, "duration": "600s"},
-                        {"distanceMeters": 700, "duration": "600s"},
-                    ],
-                }
-            ]
-        }
+        mock_response = _load_geometry_fixture()
         respx.post("https://routes.googleapis.com/directions/v2:computeRoutes").respond(
             200, json=mock_response
         )
@@ -98,8 +195,8 @@ class TestRoutesClientRoutes:
         )
 
         assert "routes" in result
-        assert result["routes"][0]["polyline"]["encodedPolyline"] == "abc123"
-        assert result["routes"][0]["distanceMeters"] == 1500
+        assert result["routes"][0]["polyline"]["encodedPolyline"]
+        assert result["routes"][0]["distanceMeters"] == 1526
 
     @respx.mock
     def test_geometry_failure_raises(self) -> None:

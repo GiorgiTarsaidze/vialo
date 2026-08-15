@@ -148,3 +148,45 @@ The successful off-topic invocation loaded the complete ARM64 function and layer
 ### Remaining live-evidence gates
 
 Real provider-dependent itinerary generation and paired route geometry were not invoked because Anthropic, Google Places, and Google Routes credentials were unavailable. A sanitized live `computeRoutes` geometry fixture and a deployed 512 MB solver benchmark therefore remain open evidence tasks; production has no fixture, simulated, or hard-coded fallback. Before enabling the complete flow, configure the three server-side provider credentials plus a supported pinned Anthropic model ID, create a separate referrer-restricted Maps JavaScript API browser key, and configure AWS/GCP budget notifications at 50%, 90%, and 100%.
+
+## 2026-08-15 — Bedrock migration, hard spend cap, and live provider validation
+
+### Provider and cost-control migration
+
+- Replaced the direct Anthropic SDK/runtime key with a provider-isolated `BedrockCandidateSelector` using boto3 Converse and the active `us.anthropic.claude-sonnet-4-6` inference profile. The `CandidateSelector` protocol remains unchanged so another adapter can be added without coupling provider code to the pipeline.
+- Scoped Lambda IAM to the inference-profile ARN and its three exact Sonnet 4.6 backing model ARNs. Botocore opaque retries are disabled so each application reservation maps to one wire call.
+- Added a fail-closed DynamoDB monthly spend circuit breaker. Every initial or repair Converse invocation atomically reserves conservative input plus maximum-output cost before the call, then refunds only confirmed unused usage. Missing/malformed usage, provider ambiguity, or settlement failure retains the reservation.
+- Set the application cap to 5,000,000 micro-USD ($5) with deliberately conservative $4/M input and $20/M output rates. This synchronous guard is separate from delayed AWS Budget billing alerts.
+- Retained the HMAC-keyed five accepted planning requests per IP per UTC hour and added API Gateway default throttling at 2 requests/second with burst 5.
+
+### Google and live-integration corrections
+
+- Configured only the server-restricted Google key in Lambda; the separate browser key remains frontend-only.
+- A live walking `computeRoutes` request established that Google rejects `routingPreference` for `WALK` and `BICYCLE`. Vialo now omits it for walking and sends `TRAFFIC_UNAWARE` only for driving, with request-body regression tests for matrix and geometry calls.
+- Captured `docs/api-samples/routes-venice-geometry.json`, a sanitized live walking response containing two legs, 1,526 meters, 1,286 seconds, and a real encoded polyline. Integration tests consume this canonical fixture; production never uses it as fallback data.
+- Live Sonnet output exposed an ambiguous prompt contract: the model emitted `index` instead of `candidate_index`. The initial and repair instructions now require the exact key, with regression coverage.
+- Live origin grounding exposed that a correct locality qualifier such as `Hotel Danieli, Venice` weakened canonical-name scoring. Grounding now removes known locality tokens only for place-name similarity while retaining locality address matching and ambiguity rejection.
+
+### Deployment and live evidence
+
+CloudFormation updated `vialo-backend-dev` to `UPDATE_COMPLETE`. The deployed stack uses Python 3.12 ARM64, 512 MB memory, a 30-second timeout, the pinned Sonnet 4.6 profile, exact Bedrock IAM resources, the server Google key, the $5 cap, API throttling, and a TLS 1.2 REGIONAL `api.vialo.place` domain with a `$default` mapping.
+
+The active execute-api endpoint is `https://ap9i8up7k7.execute-api.us-east-1.amazonaws.com`. AWS reports the custom-domain DNS target as `d-qlg5m9tufa.execute-api.us-east-1.amazonaws.com`; the Cloudflare DNS-only CNAME remains a manual action, so `api.vialo.place` is not yet claimed live.
+
+Bedrock first-time-use registration propagated successfully and a minimal Converse access check returned usage metadata. Public planning requests exercised typed model errors, grounding, infeasibility handling, and the per-IP guard; the sixth attempt from the same public source received `429 RATE_LIMITED` after five accepted requests.
+
+A controlled production Lambda integration using a reserved TEST-NET source IP returned HTTP 200 and schema version 1 with:
+
+- two grounded retained stops and real opening intervals;
+- two visit entries and two directed travel entries;
+- an available naive-versus-optimized comparison with two real 421-character encoded polylines;
+- two Google Maps handoff URLs;
+- no raw prompt field.
+
+That successful invocation settled one Bedrock call with 432 input tokens, 860 output tokens, and 18,929 conservative micro-USD. The monthly `reservedMicroUsd` total was 191,090, safely below the 5,000,000 cap. Earlier provider ambiguity remains conservatively accounted rather than deleted.
+
+### Final validation
+
+The post-migration release gate passed with 279 tests and 86% statement coverage, Ruff lint/format checks, strict mypy, source and transformed SAM validation, a successful SAM build, ARM64 layer verification, and repository safety validation. The dependency layer contains one CPython 3.12 AArch64 native extension, 31,638,313 uncompressed bytes, and 18,099,160 zipped bytes.
+
+One release run exposed a flaky Moto-only concurrency result because Moto's in-memory backend can lose concurrent writes even though DynamoDB conditionally updates a single item atomically. The test now preserves genuinely concurrent callers while serializing only the emulated storage operation to model DynamoDB per-item linearizability and still evaluates the production condition. It passed 20 consecutive stress runs plus the full suite; persisted and caller-acknowledged reservations remained under the cap.

@@ -58,3 +58,21 @@ def test_access_logs_and_runtime_configuration_do_not_expose_private_inputs() ->
 def test_static_function_log_group_precedes_lambda() -> None:
     assert "LogGroupName: /aws/lambda/vialo-backend-dev" in TEMPLATE
     assert "DependsOn: VialoLogGroup" in TEMPLATE
+
+
+def test_bedrock_iam_uses_exact_foundation_model_arns() -> None:
+    """Foundation model ARNs must be exact values returned by AWS, not wildcards."""
+    # Exact inference profile ARN via Sub
+    assert (
+        "arn:aws:bedrock:${BedrockRegion}:${AWS::AccountId}:inference-profile/${BedrockModelId}"
+        in TEMPLATE
+    )
+    # Exact foundation model ARNs (no version suffix, no wildcard)
+    assert "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6" in TEMPLATE
+    assert "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6" in TEMPLATE
+    assert "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6" in TEMPLATE
+    # No wildcard resources for Bedrock
+    assert "arn:aws:bedrock:*" not in TEMPLATE
+    assert 'Resource: "*"' not in TEMPLATE
+    # No version-suffixed ARNs
+    assert "v1:0" not in TEMPLATE

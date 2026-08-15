@@ -1,7 +1,8 @@
 """API/pipeline integration tests with Powertools HTTP API v2 events.
 
 Covers: complete flow, partial/excluded-hours, missing origin, comparison unavailable,
-rate-limited, share create/read/delete, no provider call for off-topic.
+rate-limited, share create/read/delete, no provider call for off-topic,
+budget-exceeded (429), spend-limiter-unavailable (503).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vialo.handler import lambda_handler
+from vialo.services.spend_limiter import BudgetExceededError, SpendLimiterUnavailableError
 
 
 def _make_apigw_event(
@@ -76,7 +78,7 @@ class TestOffTopic:
     def test_off_topic_no_provider_call(self) -> None:
         """Off-topic prompts should be rejected without calling any provider."""
         event = _make_apigw_event("POST", "/api/itineraries", {"prompt": "write me some code"})
-        with patch("vialo.api.itineraries.AnthropicCandidateSelector") as mock_selector:
+        with patch("vialo.api.itineraries.BedrockCandidateSelector") as mock_selector:
             response = lambda_handler(event, _mock_context())
             mock_selector.assert_not_called()
 
@@ -155,13 +157,20 @@ class TestOriginGrounding:
 
         with (
             patch("vialo.api.itineraries.RateLimiter") as mock_rl_cls,
-            patch("vialo.api.itineraries.select_stops", return_value=mock_intent),
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as mock_selector_cls,
+            patch("vialo.api.itineraries.BedrockSpendLimiter") as mock_limiter_cls,
             patch("vialo.api.itineraries.ground_origin", return_value=None),
             patch("vialo.api.itineraries.PlacesClient"),
         ):
             mock_rl = MagicMock()
             mock_rl.check_and_increment.return_value = (True, None)
             mock_rl_cls.return_value = mock_rl
+            mock_selector = MagicMock()
+            mock_selector.select.return_value = mock_intent
+            mock_selector_cls.return_value = mock_selector
+            mock_limiter = MagicMock()
+            mock_limiter.reserve.return_value = 50000
+            mock_limiter_cls.return_value = mock_limiter
 
             response = lambda_handler(event, _mock_context())
 
@@ -210,7 +219,8 @@ class TestExcludedHours:
 
         with (
             patch("vialo.api.itineraries.RateLimiter") as mock_rl_cls,
-            patch("vialo.api.itineraries.select_stops", return_value=mock_intent),
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as mock_selector_cls,
+            patch("vialo.api.itineraries.BedrockSpendLimiter") as mock_limiter_cls,
             patch("vialo.api.itineraries.ground_origin", return_value=mock_origin),
             patch("vialo.api.itineraries.ground_places", return_value=([], [])),
             patch("vialo.api.itineraries.PlacesClient"),
@@ -218,6 +228,12 @@ class TestExcludedHours:
             mock_rl = MagicMock()
             mock_rl.check_and_increment.return_value = (True, None)
             mock_rl_cls.return_value = mock_rl
+            mock_selector = MagicMock()
+            mock_selector.select.return_value = mock_intent
+            mock_selector_cls.return_value = mock_selector
+            mock_limiter = MagicMock()
+            mock_limiter.reserve.return_value = 50000
+            mock_limiter_cls.return_value = mock_limiter
 
             response = lambda_handler(event, _mock_context())
 
@@ -397,7 +413,8 @@ class TestCompletePipelineContract:
 
         with (
             patch("vialo.api.itineraries.RateLimiter") as rate_limiter_class,
-            patch("vialo.api.itineraries.select_stops", return_value=intent),
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as selector_class,
+            patch("vialo.api.itineraries.BedrockSpendLimiter") as limiter_class,
             patch("vialo.api.itineraries.ground_origin", return_value=origin) as ground_origin,
             patch(
                 "vialo.api.itineraries.ground_places", return_value=([stop], [])
@@ -414,6 +431,12 @@ class TestCompletePipelineContract:
             patch("vialo.api.itineraries.ShareRepository") as share_class,
         ):
             rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            mock_selector = MagicMock()
+            mock_selector.select.return_value = intent
+            selector_class.return_value = mock_selector
+            mock_limiter = MagicMock()
+            mock_limiter.reserve.return_value = 50000
+            limiter_class.return_value = mock_limiter
             share_class.return_value.generate_proof.return_value = proof
             response = lambda_handler(event, _mock_context())
 
@@ -466,3 +489,84 @@ class TestCompletePipelineContract:
         assert ground_places.call_args.kwargs["cache"] is cache
         places_class.return_value.close.assert_called_once_with()
         routes_class.return_value.close.assert_called_once_with()
+
+
+class TestBudgetExceededReturns429:
+    """BudgetExceededError from selector => 429 AI_BUDGET_EXCEEDED, no downstream."""
+
+    def test_budget_exceeded_returns_429_with_code(self) -> None:
+        """BudgetExceededError yields 429 with AI_BUDGET_EXCEEDED and no raw detail."""
+        event = _make_apigw_event(
+            "POST", "/api/itineraries", {"prompt": "Walk Venice today 6 hours from Hotel Danieli"}
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as mock_rl_cls,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as mock_selector_cls,
+            patch("vialo.api.itineraries.BedrockSpendLimiter") as mock_limiter_cls,
+            patch("vialo.api.itineraries.PlacesClient") as mock_places_cls,
+            patch("vialo.api.itineraries.RoutesClient") as mock_routes_cls,
+        ):
+            mock_rl = MagicMock()
+            mock_rl.check_and_increment.return_value = (True, None)
+            mock_rl_cls.return_value = mock_rl
+            mock_selector = MagicMock()
+            mock_selector.select.side_effect = BudgetExceededError("cap exceeded at 5000000")
+            mock_selector_cls.return_value = mock_selector
+            mock_limiter = MagicMock()
+            mock_limiter_cls.return_value = mock_limiter
+
+            response = lambda_handler(event, _mock_context())
+
+            # No Places or Routes clients used
+            mock_places_cls.return_value.search_text.assert_not_called()
+            mock_routes_cls.return_value.compute_route_matrix.assert_not_called()
+
+        assert response["statusCode"] == 429
+        body = json.loads(response["body"])
+        assert body["error"]["code"] == "AI_BUDGET_EXCEEDED"
+        # No raw exception detail leaked
+        assert "5000000" not in body["error"]["message"]
+        assert "cap exceeded" not in body["error"]["message"]
+
+
+class TestSpendLimiterUnavailableReturns503:
+    """SpendLimiterUnavailableError from selector => sanitized 503, no downstream."""
+
+    def test_spend_limiter_unavailable_returns_503(self) -> None:
+        """SpendLimiterUnavailableError yields 503 with no raw internal detail."""
+        event = _make_apigw_event(
+            "POST", "/api/itineraries", {"prompt": "Walk Venice today 6 hours from Hotel Danieli"}
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as mock_rl_cls,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as mock_selector_cls,
+            patch("vialo.api.itineraries.BedrockSpendLimiter") as mock_limiter_cls,
+            patch("vialo.api.itineraries.PlacesClient") as mock_places_cls,
+            patch("vialo.api.itineraries.RoutesClient") as mock_routes_cls,
+        ):
+            mock_rl = MagicMock()
+            mock_rl.check_and_increment.return_value = (True, None)
+            mock_rl_cls.return_value = mock_rl
+            mock_selector = MagicMock()
+            mock_selector.select.side_effect = SpendLimiterUnavailableError(
+                "DynamoDB error during budget reservation: ConditionalCheckFailedException"
+            )
+            mock_selector_cls.return_value = mock_selector
+            mock_limiter = MagicMock()
+            mock_limiter_cls.return_value = mock_limiter
+
+            response = lambda_handler(event, _mock_context())
+
+            # No downstream provider calls
+            mock_places_cls.return_value.search_text.assert_not_called()
+            mock_routes_cls.return_value.compute_route_matrix.assert_not_called()
+
+        assert response["statusCode"] == 503
+        body = json.loads(response["body"])
+        assert body["error"]["code"] == "INTERNAL_ERROR"
+        # No raw exception detail or DynamoDB info leaked
+        assert "DynamoDB" not in body["error"]["message"]
+        assert "ConditionalCheckFailedException" not in body["error"]["message"]
+        assert "budget reservation" not in body["error"]["message"]

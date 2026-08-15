@@ -8,7 +8,7 @@
 ```text
 POST /itineraries
   -> validate request + scope + rate limit
-  -> provider-isolated candidate selector (Anthropic Claude in production)
+  -> provider-isolated candidate selector (AWS Bedrock Claude in production)
   -> Places grounding + split-freshness cache
   -> directed Routes matrix
   -> exact time-window solver
@@ -32,7 +32,7 @@ DELETE /shares/{shareId}
 
 One Python 3.12 Lambda exposes all routes through API Gateway HTTP API. AWS Lambda Powertools `APIGatewayHttpResolver` owns HTTP routing; Pydantic v2 validates every boundary. Pipeline steps remain separate modules, and deterministic domain modules do not import provider SDKs, boto3, Powertools, or API Gateway event types.
 
-External I/O uses `httpx` for direct Google REST calls, Anthropic's Python SDK in one adapter, and `boto3` repositories for DynamoDB. AWS SAM builds and deploys the Lambda, API, tables, explicit CloudWatch log retention, S3, and CloudFront resources.
+External I/O uses `httpx` for direct Google REST calls, boto3 `bedrock-runtime` Converse in one adapter, and `boto3` repositories for DynamoDB. AWS SAM builds and deploys the Lambda, API, tables, explicit CloudWatch log retention, S3, and CloudFront resources.
 
 ## 2. Public endpoint contracts
 
@@ -161,7 +161,7 @@ class CandidateSelector(Protocol):
     def select(self, prompt: str) -> ParsedIntent: ...
 ```
 
-The composition root injects `AnthropicCandidateSelector`, configured by `ANTHROPIC_API_KEY` and a pinned `ANTHROPIC_MODEL_ID`. No other pipeline or domain module imports the Anthropic SDK. This is provider isolation, not runtime multi-provider selection.
+The composition root injects `BedrockCandidateSelector`, configured by a pinned `BEDROCK_MODEL_ID` (`us.anthropic.claude-sonnet-4-6`) and the Lambda execution role's IAM permissions. No other pipeline or domain module imports the Bedrock SDK. This is provider isolation, not runtime multi-provider selection.
 
 `KIRO_API_KEY` is not an application credential. Official Kiro documentation scopes it to headless Kiro CLI authentication and does not document direct model-provider access. Kiro credits likewise must not be assumed to pay for deployed inference.
 
@@ -447,6 +447,35 @@ expiresAt: bucket end + 1 hour
 
 An atomic conditional update permits counts 1–5 and rejects later requests. The salt is a server secret. Logs contain neither the canonical IP nor its full hash.
 
+### 14.1 Bedrock spend tracking
+
+The same `request-limits` table stores monthly Bedrock spend items:
+
+```text
+PK: BEDROCK_SPEND#YYYY-MM
+SK: MONTHLY_TOTAL
+reservedMicroUsd: atomic integer (micro-USD, 1 USD = 1,000,000)
+actualMicroUsd: integer
+callCount: integer
+totalInputTokens: integer
+totalOutputTokens: integer
+expiresAt: end of month + 7 days
+```
+
+**Micro-USD reservation/settlement protocol:**
+
+1. Before each Bedrock Converse call, estimate conservative reservation: `(estimated_input_tokens × $4/M + max_output_tokens × $20/M)` converted to micro-USD, rounded up + 1.
+2. Atomically increment `reservedMicroUsd` with a condition that the post-increment value does not exceed the monthly cap (default $5.00 = 5,000,000 micro-USD). If condition fails → `AI_BUDGET_EXCEEDED` (HTTP 429), zero Bedrock calls.
+3. If DynamoDB is unreachable → `SpendLimiterUnavailableError` (HTTP 503), zero Bedrock calls (fail closed).
+4. After successful Converse with validated usage (real nonneg int inputTokens/outputTokens): settle by computing actual cost and refunding unused reservation. If actual > reservation, add overage (never under-account).
+5. If usage is missing/malformed/negative (bool, non-int): retain full reservation (fail closed), log warning. Model output may still be used.
+6. If Bedrock errors: reservation retained (fail closed).
+7. Monthly reset: each calendar month uses a separate partition key.
+
+**Distinction from AWS Budget alerts:** AWS Budgets evaluate billing data that can lag hours. This application metering is synchronous, conservative (overestimates by design using max_output_tokens worst-case), and fail-closed—it guarantees no single request can overshoot the cap even under concurrent load.
+
+**Botocore retry disabled:** The Bedrock client uses `total_max_attempts: 1` so that one DynamoDB reservation maps to exactly one network call. The repair path (one allowed retry on invalid model output) performs its own independent reservation/settlement cycle.
+
 ## 15. Response model
 
 ```python
@@ -488,6 +517,8 @@ User-facing text is rendered from diagnostic codes and typed parameters in the f
 |---|---:|---|
 | invalid/off-topic | 400/422 | typed error, no paid calls after guard |
 | rate limit | 429 | retry timestamp |
+| budget exceeded | 429 | `AI_BUDGET_EXCEEDED`, no Bedrock call |
+| spend limiter unavailable | 503 | sanitized error, no Bedrock call |
 | origin failure | 422 | no itinerary |
 | candidate grounding/hours failure | 200 | partial diagnostics when other stops remain |
 | provider outage before schedule | 502 | retryable typed error |

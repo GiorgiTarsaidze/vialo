@@ -75,8 +75,9 @@ class RoutesClient:
             "origins": [_location_to_waypoint(o) for o in origins],
             "destinations": [_location_to_waypoint(d) for d in destinations],
             "travelMode": _travel_mode_api(travel_mode),
-            "routingPreference": "TRAFFIC_UNAWARE",
         }
+        if travel_mode == "DRIVE":
+            body["routingPreference"] = "TRAFFIC_UNAWARE"
         headers = {
             "X-Goog-Api-Key": self._api_key,
             "X-Goog-FieldMask": MATRIX_FIELD_MASK,
@@ -115,11 +116,12 @@ class RoutesClient:
                 }
             },
             "travelMode": _travel_mode_api(travel_mode),
-            "routingPreference": "TRAFFIC_UNAWARE",
             "polylineQuality": "HIGH_QUALITY",
             "polylineEncoding": "ENCODED_POLYLINE",
             "optimizeWaypointOrder": optimize_waypoint_order,
         }
+        if travel_mode == "DRIVE":
+            body["routingPreference"] = "TRAFFIC_UNAWARE"
 
         if intermediates:
             body["intermediates"] = [

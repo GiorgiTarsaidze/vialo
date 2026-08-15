@@ -32,10 +32,12 @@ def load_fixture(name: str) -> Any:
 def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set minimal environment variables for tests that might load config."""
     env_vars = {
-        "ANTHROPIC_API_KEY": "test-key",
-        "ANTHROPIC_MODEL_ID": "test-model",
-        "GOOGLE_PLACES_KEY": "test-places-key",
-        "GOOGLE_ROUTES_KEY": "test-routes-key",
+        "BEDROCK_MODEL_ID": "us.anthropic.claude-sonnet-4-6",
+        "BEDROCK_REGION": "us-east-1",
+        "BEDROCK_MONTHLY_BUDGET_USD": "5.00",
+        "BEDROCK_INPUT_USD_PER_MILLION_TOKENS": "4.00",
+        "BEDROCK_OUTPUT_USD_PER_MILLION_TOKENS": "20.00",
+        "GOOGLE_SERVER_KEY": "test-server-key",
         "DYNAMODB_TABLE_CACHE": "test-cache",
         "DYNAMODB_TABLE_SHARES": "test-shares",
         "DYNAMODB_TABLE_RATE_LIMITS": "test-limits",

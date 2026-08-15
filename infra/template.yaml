@@ -16,16 +16,22 @@ Globals:
       ManagedBy: sam
 
 Parameters:
-  AnthropicApiKey:
+  BedrockModelId:
     Type: String
-    NoEcho: true
-  AnthropicModelId:
+    Default: us.anthropic.claude-sonnet-4-6
+  BedrockRegion:
     Type: String
-    Default: claude-sonnet-4-20250514
-  GooglePlacesKey:
+    Default: us-east-1
+  BedrockMonthlyBudgetUsd:
     Type: String
-    NoEcho: true
-  GoogleRoutesKey:
+    Default: "5.00"
+  BedrockInputUsdPerMillionTokens:
+    Type: String
+    Default: "4.00"
+  BedrockOutputUsdPerMillionTokens:
+    Type: String
+    Default: "20.00"
+  GoogleServerKey:
     Type: String
     NoEcho: true
   RateLimitHmacSecret:
@@ -40,6 +46,13 @@ Parameters:
   LogLevel:
     Type: String
     Default: INFO
+  ApiCertificateArn:
+    Type: String
+    Description: ACM certificate ARN for api.vialo.place (us-east-1 regional)
+    Default: ""
+
+Conditions:
+  HasApiCertificate: !Not [!Equals [!Ref ApiCertificateArn, ""]]
 
 Resources:
   # --- Log Group (created before function to avoid race) ---
@@ -111,6 +124,18 @@ Resources:
                   - !GetAtt PlaceCacheTable.Arn
                   - !GetAtt SharedItinerariesTable.Arn
                   - !GetAtt RequestLimitsTable.Arn
+        - PolicyName: vialo-bedrock-invoke
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource:
+                  - !Sub "arn:aws:bedrock:${BedrockRegion}:${AWS::AccountId}:inference-profile/${BedrockModelId}"
+                  - "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6"
+                  - "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6"
+                  - "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6"
       Tags:
         - Key: Project
           Value: vialo
@@ -130,9 +155,13 @@ Resources:
         DestinationArn: !GetAtt VialoApiLogGroup.Arn
         Format: >-
           {"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency"}
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 5
+        ThrottlingRateLimit: 2
       CorsConfiguration:
         AllowOrigins:
           - "https://vialo.place"
+          - "https://api.vialo.place"
         AllowMethods:
           - POST
           - GET
@@ -147,6 +176,31 @@ Resources:
         Environment: dev
         ManagedBy: sam
 
+  # --- Custom Domain (conditional on certificate) ---
+  ApiDomainName:
+    Type: AWS::ApiGatewayV2::DomainName
+    Condition: HasApiCertificate
+    Properties:
+      DomainName: api.vialo.place
+      DomainNameConfigurations:
+        - EndpointType: REGIONAL
+          SecurityPolicy: TLS_1_2
+          CertificateArn: !Ref ApiCertificateArn
+      Tags:
+        Project: vialo
+        vialo: "true"
+        Environment: dev
+        ManagedBy: sam
+
+  ApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: HasApiCertificate
+    DependsOn: VialoApiApiGatewayDefaultStage
+    Properties:
+      ApiId: !Ref VialoApi
+      DomainName: !Ref ApiDomainName
+      Stage: $default
+
   # --- Lambda Function ---
   VialoFunction:
     Type: AWS::Serverless::Function
@@ -160,10 +214,12 @@ Resources:
         - !Ref VialoDepsLayer
       Environment:
         Variables:
-          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
-          ANTHROPIC_MODEL_ID: !Ref AnthropicModelId
-          GOOGLE_PLACES_KEY: !Ref GooglePlacesKey
-          GOOGLE_ROUTES_KEY: !Ref GoogleRoutesKey
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_REGION: !Ref BedrockRegion
+          BEDROCK_MONTHLY_BUDGET_USD: !Ref BedrockMonthlyBudgetUsd
+          BEDROCK_INPUT_USD_PER_MILLION_TOKENS: !Ref BedrockInputUsdPerMillionTokens
+          BEDROCK_OUTPUT_USD_PER_MILLION_TOKENS: !Ref BedrockOutputUsdPerMillionTokens
+          GOOGLE_SERVER_KEY: !Ref GoogleServerKey
           DYNAMODB_TABLE_CACHE: !Ref PlaceCacheTable
           DYNAMODB_TABLE_SHARES: !Ref SharedItinerariesTable
           DYNAMODB_TABLE_RATE_LIMITS: !Ref RequestLimitsTable
@@ -204,8 +260,8 @@ Resources:
         ManagedBy: sam
 
   # --- Layer ---
-  # NOTE: AWS::Serverless::LayerVersion (CFN LayerVersion) does not support Tags property.
-  # Apply tags post-deploy via: aws lambda tag-resource --resource <layer-version-arn> --tags ...
+  # NOTE: AWS::Serverless::LayerVersion does not support the Tags property.
+  # Layer-version tagging is unsupported through CloudFormation or the Lambda tagging API.
   VialoDepsLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
@@ -309,8 +365,16 @@ Resources:
 
 Outputs:
   ApiUrl:
-    Description: API Gateway URL
+    Description: API Gateway execute-api URL
     Value: !Sub "https://${VialoApi}.execute-api.${AWS::Region}.amazonaws.com"
   FunctionArn:
     Description: Lambda function ARN
     Value: !GetAtt VialoFunction.Arn
+  ApiCustomUrl:
+    Condition: HasApiCertificate
+    Description: Custom domain URL for the API
+    Value: "https://api.vialo.place"
+  ApiDnsTarget:
+    Condition: HasApiCertificate
+    Description: DNS target for CNAME/ALIAS record to api.vialo.place
+    Value: !GetAtt ApiDomainName.RegionalDomainName

@@ -51,6 +51,18 @@ class TestGroundOrigin:
         # Verify it was called with origin query
         client.search_text.assert_called_once_with("Hotel Danieli", "Venice")
 
+    def test_origin_with_locality_qualifier_matches_canonical_name(self) -> None:
+        """Locality text is address context, not part of canonical-name scoring."""
+        client = MagicMock()
+        client.search_text.return_value = [
+            _make_search_result(place_id="origin_hotel", display_name="Hotel Danieli")
+        ]
+
+        result = ground_origin("Hotel Danieli, Venice", "Venice", client)
+
+        assert result is not None
+        assert result.place_id == "origin_hotel"
+
     def test_origin_not_found_returns_none(self) -> None:
         """If origin query has no results, returns None."""
         client = MagicMock()
