@@ -50,6 +50,6 @@ If something would improve the product but isn't in this list, it goes in the RE
 - **Nothing simulated.** No hard-coded results presented as working features, no mock data standing in for a real integration. A judge running the app must get genuinely computed output. This is pass/fail in Round One.
 - **Zero learning curve.** A judge lands on it, understands it in 5 seconds, gets value in 30.
 - **Free during judging.** No accounts, no payment. Rate-limited and jailbreak-hardened.
-- **Maximum 9 stops.** Google Maps caps routes at 10 total (origin + 9). This is a product constraint, not a bug — "One perfect day. Up to 9 stops."
+- **Maximum 9 visit stops.** This keeps the fixed-origin exact solver bounded at 9! and the directed matrix at 10×10. Google Maps platform-specific waypoint limits are handled explicitly with a full URL plus browser-safe route parts—never by silently dropping stops.
 - **English only** in all code, docs, and UI.
 - **No real API keys, secrets, or credentials in any committed file.** This is a disqualification trigger.

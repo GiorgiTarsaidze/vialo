@@ -52,4 +52,28 @@ The first reviewer startup exposed that a workspace MCP configuration was availa
 
 ### Design decision
 
-The visual workflow will be agent-led rather than dependent on Figma. Visual impact must come from immediate hierarchy, the honest route-comparison reveal, the scheduled timeline, confident typography, and precise motion—not from extra controls, decorative effects, or dashboard complexity. Playwright evidence at mobile and desktop widths is required before a visual pass is claimed.
+The visual workflow will be agent-led rather than dependent on external design files. Visual impact must come from immediate hierarchy, the honest route-comparison reveal, the scheduled timeline, confident typography, and precise motion—not from extra controls, decorative effects, or dashboard complexity. Playwright evidence at mobile and desktop widths is required before a visual pass is claimed.
+
+## 2026-08-15 — Itinerary-engine specification and experience blueprint
+
+### Technical decisions locked
+
+- Use Places `timeZone.id` as the authoritative IANA timezone for requested-date arithmetic. `utcOffsetMinutes` is current-only, so a separate Time Zone API call is unnecessary and the offset is never used to schedule another date.
+- Treat `currentOpeningHours` as authoritative across its documented seven-local-date coverage. A covered date with no usable period is closed; recurring hours are only a fallback outside that coverage. Missing hours are never converted into assumed availability.
+- Validate model-proposed visit durations against category bounds and preserve separate, verifiable provenance for explicit user durations.
+- Include the fixed origin with up to nine visit stops in the directed matrix. The corrected maximum is 10 × 10 = 100 elements, not 9 × 9.
+- Keep the exhaustive fixed-origin solver exact through deterministic tie-breaks and only safe pruning. Lambda latency remains a benchmark requirement rather than a claim.
+- Generate comparison evidence with two ordered `computeRoutes` requests because `computeRouteMatrix` has no polyline. Both routes use the same retained stops and options; failed geometry never becomes a straight-line substitute.
+- Build a full Maps URL plus deterministic overlapping browser-safe parts with no more than three intermediate waypoints each. No handoff path may truncate or reorder stops.
+- Create anonymous shares only after an explicit action. Public share URLs remain separate from creator-only deletion tokens, and prompts, raw IPs, and raw provider/model bodies are excluded from stored shares and logs.
+
+### Kiro specifications and design
+
+- Added complete itinerary-engine requirements, technical design, and six-wave implementation tasks under `.kiro/specs/itinerary-engine/`.
+- Added an agent-led three-screen frontend blueprint for the input hero, computed result, and shared permalink.
+- Locked the comparison to one map with a coral dashed naive route and a heavier plum optimized route, real route metrics, explicit feasibility, signed deltas, and honest one-stop/same-order states.
+- Defined responsive, keyboard, reduced-motion, attribution, loading, partial, infeasible, error, and expired-share acceptance behavior before implementation.
+
+### Independent review and corrections
+
+Independent backend, UX/accessibility, security/privacy, and release audits returned PASS with no blocker or major findings. Review follow-ups reconciled the mobile one-map order, made zero-distance matrix diagonal initialization explicit, reused strict protobuf-duration parsing for route geometry, and preserved fixed-window rate-limit behavior as an intentional low-cost guardrail.

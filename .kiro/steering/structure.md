@@ -9,9 +9,14 @@ inclusion: always
 ```
 vialo/
 ├── .kiro/
-│   ├── steering/           # product.md, tech.md, structure.md, design-system.md
-│   ├── specs/              # feature specs (requirements.md, design.md, tasks.md)
-│   └── hooks/              # event-driven automation
+│   ├── agents/             # project-local specialist agents
+│   ├── hooks/              # executable validation automation
+│   ├── settings/           # workspace MCP configuration
+│   ├── skills/             # progressive visual, mobile, route, and accessibility guidance
+│   ├── specs/
+│   │   ├── itinerary-engine/    # backend requirements.md, design.md, tasks.md
+│   │   └── frontend-experience/ # agent-led screen blueprint
+│   └── steering/           # product.md, tech.md, structure.md, design-system.md
 ├── frontend/
 │   ├── public/
 │   │   ├── index.html
@@ -35,6 +40,7 @@ vialo/
 │   │   │   ├── ground-places.ts
 │   │   │   ├── compute-matrix.ts
 │   │   │   ├── solve-route.ts
+│   │   │   ├── compute-route-geometry.ts
 │   │   │   └── build-maps-url.ts
 │   │   ├── services/       # external API wrappers (Places, Routes, Claude, DynamoDB)
 │   │   ├── models/         # TypeScript types and Zod schemas
@@ -81,7 +87,7 @@ vialo/
 
 ### What does NOT get tested (time constraint)
 
-- End-to-end browser automation (Cypress/Playwright) — manual testing suffices for 4 features
+- A committed end-to-end browser test suite — component/integration tests plus agent-led Playwright MCP review are sufficient for the four-feature build
 - Infrastructure (CDK/SAM correctness verified by deployment)
 - Visual regression
 
@@ -124,5 +130,9 @@ GOOGLE_ROUTES_KEY=AIza...
 GOOGLE_MAPS_BROWSER_KEY=AIza...
 DYNAMODB_TABLE_CACHE=vialo-place-cache
 DYNAMODB_TABLE_SHARES=vialo-shared-itineraries
+DYNAMODB_TABLE_RATE_LIMITS=vialo-request-limits
+RATE_LIMIT_HMAC_SECRET=replace-with-random-value
+SHARE_SIGNING_SECRET=replace-with-random-value
+SHARE_DELETION_SECRET=replace-with-random-value
 AWS_REGION=us-east-1
 ```

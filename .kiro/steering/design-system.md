@@ -169,7 +169,7 @@ Prefer borders over shadows. Use one restrained floating elevation only for the 
 4. Dropped-stop or constraint diagnostics, when applicable
 5. Open in Google Maps and share actions
 
-On desktop, timeline and map may sit in a balanced two-column layout. On mobile, the comparison comes first, then timeline, then map. The Google Maps action may be sticky at the bottom after a valid result exists.
+On desktop, timeline and the one comparison map may sit in a balanced two-column layout. On mobile, the comparison summary and map come first, followed by the timeline. The Google Maps action may be sticky at the bottom after a valid result exists.
 
 ## Signature surface 1 — scheduled timeline
 
