@@ -6,7 +6,7 @@ inclusion: always
 
 ## Repository layout
 
-```
+```text
 vialo/
 ├── .kiro/
 │   ├── agents/             # project-local specialist agents
@@ -24,115 +24,167 @@ vialo/
 │   ├── src/
 │   │   ├── components/     # React components, one per file
 │   │   ├── hooks/          # custom React hooks
-│   │   ├── lib/            # utilities, API client, types
-│   │   ├── styles/         # global CSS, design tokens
+│   │   ├── lib/            # API client and generated/validated contracts
+│   │   ├── styles/         # global CSS and design tokens
 │   │   ├── App.tsx
 │   │   └── main.tsx
-│   ├── tests/              # frontend tests (colocated alternative: *.test.tsx next to source)
+│   ├── tests/              # component tests or colocated *.test.tsx files
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── vite.config.ts
 ├── backend/
 │   ├── src/
-│   │   ├── handler.ts      # Lambda entry point
-│   │   ├── pipeline/       # one file per pipeline step
-│   │   │   ├── select-stops.ts
-│   │   │   ├── ground-places.ts
-│   │   │   ├── compute-matrix.ts
-│   │   │   ├── solve-route.ts
-│   │   │   ├── compute-route-geometry.ts
-│   │   │   └── build-maps-url.ts
-│   │   ├── services/       # external API wrappers (Places, Routes, Claude, DynamoDB)
-│   │   ├── models/         # TypeScript types and Zod schemas
-│   │   └── utils/          # shared helpers (rate-limit, validation, sanitization)
+│   │   └── vialo/
+│   │       ├── __init__.py
+│   │       ├── handler.py             # Lambda Powertools API Gateway entry point
+│   │       ├── api/
+│   │       │   ├── itineraries.py     # planning route
+│   │       │   └── shares.py          # create/read/delete share routes
+│   │       ├── pipeline/
+│   │       │   ├── select_stops.py
+│   │       │   ├── ground_places.py
+│   │       │   ├── compute_matrix.py
+│   │       │   ├── solve_route.py
+│   │       │   ├── compute_route_geometry.py
+│   │       │   └── build_maps_handoff.py
+│   │       ├── services/
+│   │       │   ├── candidate_selector.py   # provider-neutral Protocol
+│   │       │   ├── anthropic_selector.py   # production Claude adapter
+│   │       │   ├── places_client.py        # direct Google REST wrapper
+│   │       │   ├── routes_client.py        # direct Google REST wrapper
+│   │       │   ├── place_cache.py
+│   │       │   ├── rate_limiter.py
+│   │       │   └── share_repository.py
+│   │       ├── models/                 # strict Pydantic request/provider/response models
+│   │       │   ├── requests.py
+│   │       │   ├── providers.py
+│   │       │   ├── itinerary.py
+│   │       │   └── diagnostics.py
+│   │       └── domain/                 # provider-free deterministic logic
+│   │           ├── opening_hours.py
+│   │           ├── route_matrix.py
+│   │           ├── solver.py
+│   │           └── timezones.py
 │   ├── tests/
-│   │   ├── unit/           # pure logic tests (solver, URL builder, validation)
-│   │   └── integration/    # tests against API fixtures
-│   ├── package.json
-│   └── tsconfig.json
-├── infra/                  # IaC (CDK or SAM template)
+│   │   ├── unit/                       # pure logic and property tests
+│   │   ├── integration/                # mocked provider and DynamoDB boundaries
+│   │   └── contract/                   # API schema and frontend compatibility tests
+│   ├── pyproject.toml
+│   └── uv.lock
+├── infra/
+│   └── template.yaml       # AWS SAM: HTTP API, Lambda, DynamoDB, logs, S3/CloudFront
 ├── docs/
-│   ├── api-samples/        # raw API responses from validation gate
-│   └── kiro-evidence/      # screenshots and recordings (large files gitignored)
+│   ├── api-samples/        # canonical sanitized provider responses
+│   └── kiro-evidence/      # screenshots and recordings (large raw files ignored)
 ├── DEVLOG.md
 ├── KIRO.md
 ├── README.md
 ├── LICENSE
-├── .env.example            # documents required env vars, no real values
-├── .gitignore
-└── package.json            # root workspace (if using npm workspaces)
+├── .env.example            # required configuration placeholders, never real values
+└── .gitignore
 ```
 
-## Naming conventions
+## Language and naming conventions
 
-- **Files:** kebab-case for all source files (`solve-route.ts`, `timeline-view.tsx`)
-- **Components:** PascalCase for React component files (`TimelineView.tsx`) — exception to kebab-case rule for React convention
-- **Directories:** kebab-case (`compute-matrix/`, `design-system/`)
-- **Types/Interfaces:** PascalCase (`ItineraryStop`, `RouteMatrix`)
-- **Functions:** camelCase (`solveRoute`, `buildMapsUrl`)
-- **Constants:** UPPER_SNAKE_CASE for environment variables and true constants (`MAX_STOPS`, `CACHE_TTL_MS`)
-- **Test files:** `<source-name>.test.ts` or `<source-name>.test.tsx`
+### Python backend
+
+- Runtime: Python 3.12.
+- Modules and functions: `snake_case` (`solve_route.py`, `build_maps_handoff`).
+- Classes, protocols, and Pydantic models: `PascalCase` (`ItineraryResponse`, `CandidateSelector`).
+- Constants and environment variables: `UPPER_SNAKE_CASE` (`MAX_STOPS`, `CACHE_TTL_SECONDS`).
+- Tests: `test_<module>.py`; test functions describe behavior in `snake_case`.
+- Imports: absolute imports from `vialo`; no wildcard imports and no import-side-effect registration outside the API composition root.
+- Domain modules do not import Anthropic, Google, boto3, Lambda Powertools, or API Gateway types.
+
+### TypeScript frontend
+
+- React components: PascalCase files (`TimelineView.tsx`).
+- Hooks and utilities: kebab-case files; functions and variables use camelCase.
+- Types/interfaces: PascalCase; true constants and environment variables use UPPER_SNAKE_CASE.
+- Tests: `<source-name>.test.ts` or `<source-name>.test.tsx`.
+- Use direct imports and the configured `src/` path alias; avoid barrel re-exports.
+
+## Backend dependency policy
+
+- `pyproject.toml` is the source of package metadata and tool configuration.
+- `uv.lock` is committed. Production and development dependencies use exact locked resolutions; Docker is not required for ordinary local tests.
+- Runtime foundation: Pydantic v2, AWS Lambda Powertools, `httpx`, Anthropic's Python SDK, and `boto3`.
+- Google Places and Routes use direct REST adapters rather than large generated clients so field masks, timeouts, and payload validation stay explicit.
+- Standard-library `datetime` and `zoneinfo` drive timezone arithmetic; helpers must explicitly detect ambiguous and nonexistent local times.
+- Do not add FastAPI or Mangum. Four HTTP routes do not justify a second web framework over Lambda Powertools routing.
+
+## API contract policy
+
+Pydantic models are authoritative for backend request and response validation. Public JSON uses camelCase aliases while Python code uses snake_case. Wave 1 exports a versioned JSON Schema artifact; frontend TypeScript contracts are generated or checked against that schema so the languages cannot drift silently.
+
+The model-backed candidate selection boundary is a Python `Protocol`. Production wires one Anthropic Claude implementation. This is provider-isolated, not a promise of runtime multi-provider selection or automatic fallback.
 
 ## Testing policy
 
 ### What gets tested
 
 | Layer | What | How |
-|-------|------|-----|
-| Solver | All permutation logic, time-window validation, infeasibility detection | Unit tests with synthetic data |
-| URL builder | Correct Maps URL construction, 2048-char guard, edge cases | Unit tests |
-| Pipeline steps | Each step in isolation with recorded API fixtures | Integration tests with mocked HTTP |
-| Input validation | Prompt length, rate limit, scope check | Unit tests |
-| Frontend components | Timeline rendering, comparison view, loading/error states | Component tests (React Testing Library) |
+|---|---|---|
+| Solver | Every permutation rule, time-window feasibility, waits, ties, dropping | pytest unit tests + Hypothesis invariants |
+| Time | IANA conversion, DST ambiguity/nonexistence, split and overnight intervals | pytest parameterization + Hypothesis boundaries |
+| URL builder | Maps URL encoding, 2,048-character guard, overlapping parts | pytest unit tests |
+| Pipeline adapters | Anthropic, Places, Routes, DynamoDB behavior | integration tests with mocked HTTP/AWS boundaries |
+| API contract | Pydantic strictness, JSON Schema stability, camelCase response compatibility | contract tests |
+| Frontend | Timeline, comparison, loading/error, sharing states | Vitest + React Testing Library |
 
-### What does NOT get tested (time constraint)
+### What does not get a committed suite
 
-- A committed end-to-end browser test suite — component/integration tests plus agent-led Playwright MCP review are sufficient for the four-feature build
-- Infrastructure (CDK/SAM correctness verified by deployment)
-- Visual regression
+- Full browser end-to-end automation; component/integration tests plus agent-led Playwright MCP review cover the four-feature build.
+- Visual regression.
+- Live provider calls in ordinary test runs.
 
-### Test runner
+Infrastructure is validated with `sam validate`, `sam build`, and deployment smoke tests rather than mocked CloudFormation behavior.
 
-- **Backend:** Vitest (fast, TypeScript-native, compatible with Jest API)
-- **Frontend:** Vitest + React Testing Library
-
-### Running tests
+### Running checks
 
 ```bash
 # Backend
-cd backend && npm test
+cd backend
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+cd ..
+
+# Infrastructure
+sam validate --template-file infra/template.yaml
+sam build --template-file infra/template.yaml
 
 # Frontend
-cd frontend && npm test
-
-# All (from root, if workspaces configured)
+cd frontend
 npm test
+npm run lint
+npm run typecheck
 ```
 
-### Fixtures
+## Fixtures
 
-Recorded API responses from the validation gate live in `docs/api-samples/` as the single canonical copies. Backend integration tests load these files directly; do not duplicate them under `backend/`. They are real sanitized responses used through mocked HTTP boundaries, so tests stay deterministic without presenting mock data as a production feature.
-
-## Import conventions
-
-- Absolute imports from `src/` root using TypeScript path aliases (`@/components/...`, `@/lib/...`)
-- No barrel files (`index.ts` re-exports) — direct imports only for clarity and tree-shaking
-- External imports first, then internal, separated by a blank line
+Recorded provider responses remain in `docs/api-samples/` as the single canonical copies. Backend integration tests load them by repository-relative path and never duplicate them under `backend/`. They are real sanitized responses used through mocked boundaries, never production fallback data.
 
 ## Environment variables
 
-All secrets and configuration live in `.env` (gitignored). `.env.example` documents every required variable with placeholder values:
+`.env.example` documents placeholders only:
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_PLACES_KEY=AIza...
-GOOGLE_ROUTES_KEY=AIza...
-GOOGLE_MAPS_BROWSER_KEY=AIza...
+```text
+ANTHROPIC_API_KEY=replace-with-server-key
+ANTHROPIC_MODEL_ID=replace-with-supported-model-id
+GOOGLE_PLACES_KEY=replace-with-server-key
+GOOGLE_ROUTES_KEY=replace-with-server-key
+GOOGLE_MAPS_BROWSER_KEY=replace-with-referrer-restricted-browser-key
 DYNAMODB_TABLE_CACHE=vialo-place-cache
 DYNAMODB_TABLE_SHARES=vialo-shared-itineraries
 DYNAMODB_TABLE_RATE_LIMITS=vialo-request-limits
 RATE_LIMIT_HMAC_SECRET=replace-with-random-value
 SHARE_SIGNING_SECRET=replace-with-random-value
 SHARE_DELETION_SECRET=replace-with-random-value
+POWERTOOLS_SERVICE_NAME=vialo-api
+LOG_LEVEL=INFO
 AWS_REGION=us-east-1
 ```
+
+`KIRO_API_KEY` is intentionally absent. It authenticates headless Kiro CLI automation and is not a documented model-provider credential for deployed application inference.

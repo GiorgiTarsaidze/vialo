@@ -6,7 +6,7 @@
 
 ## Purpose
 
-The itinerary engine turns one bounded natural-language request into a grounded, feasible schedule. It uses Claude only for typed intent and candidate selection, Google Places for place facts, Google Routes for directed travel data and real geometry, and deterministic code for every scheduling decision.
+The itinerary engine turns one bounded natural-language request into a grounded, feasible schedule. It uses a model-backed candidate selector only for typed intent and candidate selection, Google Places for place facts, Google Routes for directed travel data and real geometry, and deterministic code for every scheduling decision. The production selector uses Anthropic Claude.
 
 The engine must never invent a place, opening interval, route, visit duration provenance, or handoff result.
 
@@ -22,7 +22,7 @@ The engine must never invent a place, opening interval, route, visit duration pr
 ## Terms
 
 - **Origin:** Fixed start point; not counted as a visit stop.
-- **Candidate order:** Claude's typed stop order before route optimization.
+- **Candidate order:** The candidate selector's typed stop order before route optimization.
 - **Naive order:** Candidate order restricted to the exact retained stop set used by the optimized result.
 - **Grounded stop:** Candidate resolved to a Places ID and required structured fields.
 - **Requested date:** Calendar date interpreted in the itinerary's IANA timezone.
@@ -38,7 +38,7 @@ The engine must never invent a place, opening interval, route, visit duration pr
 
 1.3. THE SYSTEM SHALL support only one-city, one-day requests using `WALK` or `DRIVE`.
 
-1.4. WHEN the prompt is clearly off-topic, abusive without itinerary intent, or lacks place-and-time intent, THE SYSTEM SHALL return the canned `OFF_TOPIC` response without calling Claude, Places, or Routes.
+1.4. WHEN the prompt is clearly off-topic, abusive without itinerary intent, or lacks place-and-time intent, THE SYSTEM SHALL return the canned `OFF_TOPIC` response without calling the candidate model, Places, or Routes.
 
 1.5. WHEN the per-IP limit of five planning requests in the current UTC-hour bucket is exceeded, THE SYSTEM SHALL return `RATE_LIMITED` with the bucket-end retry time before other paid calls.
 
@@ -50,7 +50,7 @@ The engine must never invent a place, opening interval, route, visit duration pr
 
 ## Requirement 2 — Typed intent and candidate selection
 
-2.1. Claude SHALL return schema-validated structured data only. The raw model response SHALL never be rendered to the user.
+2.1. THE production Anthropic candidate selector SHALL return schema-validated structured data only. The raw model response SHALL never be rendered to the user.
 
 2.2. The structured result SHALL include:
 
@@ -84,6 +84,8 @@ The engine must never invent a place, opening interval, route, visit duration pr
 2.7. WHEN model output violates its schema or a duration bound, THE SYSTEM SHALL make at most one structured repair attempt. A second failure SHALL return `MODEL_OUTPUT_INVALID`.
 
 2.8. WHEN the requested date is omitted, THE SYSTEM SHALL defer the default until the origin timezone is grounded, then use that timezone's current local date.
+
+2.9. Candidate selection SHALL be accessed through a narrow provider-neutral boundary so deterministic pipeline and domain code do not depend on the Anthropic SDK. The production deployment SHALL wire one Claude implementation; runtime provider switching and automatic model fallback are not required.
 
 ## Requirement 3 — Places grounding and identity
 

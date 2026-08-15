@@ -8,7 +8,7 @@
 ```text
 POST /itineraries
   -> validate request + scope + rate limit
-  -> Claude structured intent and candidate stops
+  -> provider-isolated candidate selector (Anthropic Claude in production)
   -> Places grounding + split-freshness cache
   -> directed Routes matrix
   -> exact time-window solver
@@ -24,36 +24,45 @@ POST /shares
 GET /shares/{shareId}
   -> application expiry check
   -> typed shared response
+
+DELETE /shares/{shareId}
+  -> verify creator deletion capability
+  -> conditional delete
 ```
 
-One Lambda may expose all routes behind API Gateway for the hackathon. Pipeline steps remain separate modules with external services behind interfaces.
+One Python 3.12 Lambda exposes all routes through API Gateway HTTP API. AWS Lambda Powertools `APIGatewayHttpResolver` owns HTTP routing; Pydantic v2 validates every boundary. Pipeline steps remain separate modules, and deterministic domain modules do not import provider SDKs, boto3, Powertools, or API Gateway event types.
+
+External I/O uses `httpx` for direct Google REST calls, Anthropic's Python SDK in one adapter, and `boto3` repositories for DynamoDB. AWS SAM builds and deploys the Lambda, API, tables, explicit CloudWatch log retention, S3, and CloudFront resources.
 
 ## 2. Public endpoint contracts
 
 ### `POST /itineraries`
 
-```ts
-type PlanItineraryRequest = {
-  prompt: string;
-};
+```python
+from typing import Annotated
+
+from pydantic import Field
+
+
+class PlanItineraryRequest(ApiModel):
+    prompt: Annotated[str, Field(min_length=1, max_length=500)]
 ```
 
 Successful responses use HTTP 200 even when a valid partial itinerary contains dropped-stop diagnostics. Request validation, rate limiting, off-topic input, provider failure, and internal failure use appropriate non-2xx statuses.
 
 ### `POST /shares`
 
-```ts
-type CreateShareRequest = {
-  itinerary: ItineraryResponse;
-  proof: string;
-};
+```python
+class CreateShareRequest(ApiModel):
+    itinerary: ItineraryResponse
+    proof: ShareProof
 
-type CreateShareResponse = {
-  shareId: string;
-  shareUrl: string;
-  expiresAt: string;
-  deletionToken: string;
-};
+
+class CreateShareResponse(ApiModel):
+    share_id: str
+    share_url: str
+    expires_at: datetime
+    deletion_token: str
 ```
 
 The proof envelope contains an expiry and an HMAC over the expiry plus canonical schema-versioned shareable itinerary JSON. It expires after 24 hours and is checked in constant time. This prevents arbitrary client-authored data from being published as a Vialo result without storing every prompt result.
@@ -68,60 +77,93 @@ Requires the creator-only deletion token in `X-Share-Delete-Token`. The token is
 
 ## 3. Core types
 
-```ts
-type TravelMode = 'WALK' | 'DRIVE';
-type DurationSource = 'user' | 'model_estimate';
-type HoursSource = 'current' | 'regular';
+```python
+from datetime import date, datetime, time
+from typing import Literal
 
-type ParsedIntent = {
-  localityQuery: string;
-  originQuery: string;
-  requestedDate: string | null;
-  localStartTime: string;
-  localEndTime: string;
-  travelMode: TravelMode;
-  returnToOrigin: boolean;
-  candidates: CandidateStop[];
-};
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
-type CandidateStop = {
-  candidateIndex: number;
-  name: string;
-  category: StopCategory;
-  priority: 1 | 2 | 3;
-  visitDurationMinutes: number;
-  durationSource: DurationSource;
-  durationEvidence?: {
-    start: number;
-    end: number;
-    quote: string;
-  };
-};
 
-type GroundedPlace = {
-  placeId: string;
-  displayName: string;
-  formattedAddress: string;
-  location: { latitude: number; longitude: number };
-  primaryType?: string;
-  timeZoneId: string;
-  photos: PlacePhoto[];
-};
+class ApiModel(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+        strict=True,
+    )
 
-type OpenInterval = {
-  startEpochMs: number;
-  endEpochMs: number;
-  localStart: string;
-  localEnd: string;
-};
 
-type GroundedStop = CandidateStop & GroundedPlace & {
-  hoursSource: HoursSource;
-  openIntervals: OpenInterval[];
-};
+TravelMode = Literal["WALK", "DRIVE"]
+DurationSource = Literal["user", "model_estimate"]
+HoursSource = Literal["current", "regular"]
+
+
+class DurationEvidence(ApiModel):
+    start: int
+    end: int
+    quote: str
+
+
+class CandidateStop(ApiModel):
+    candidate_index: int
+    name: str
+    category: StopCategory
+    priority: int = Field(ge=1, le=3)
+    visit_duration_minutes: int
+    duration_source: DurationSource
+    duration_evidence: DurationEvidence | None = None
+
+
+class ParsedIntent(ApiModel):
+    locality_query: str
+    origin_query: str
+    requested_date: date | None
+    local_start_time: time
+    local_end_time: time
+    travel_mode: TravelMode
+    return_to_origin: bool
+    candidates: list[CandidateStop]
+
+
+class GroundedPlace(ApiModel):
+    place_id: str
+    display_name: str
+    formatted_address: str
+    location: Location
+    primary_type: str | None = None
+    time_zone_id: str
+    photos: list[PlacePhoto]
+
+
+class OpenInterval(ApiModel):
+    start: datetime
+    end: datetime
+    local_start: str
+    local_end: str
+
+
+class GroundedStop(CandidateStop):
+    place: GroundedPlace
+    hours_source: HoursSource
+    open_intervals: list[OpenInterval]
 ```
 
-The model schema is stricter than provider schemas. Unknown model keys are rejected. Provider responses are parsed into internal types before downstream use.
+Pydantic models reject unknown keys and strict type coercion at request, model, provider, cache, share, and response boundaries. Python code uses snake_case; the response adapter calls `model_dump(by_alias=True, mode="json")` so `ApiModel` emits camelCase JSON for frontend compatibility. Provider responses are parsed into internal models before downstream use.
+
+### 3.1 Candidate-selector boundary
+
+```python
+from typing import Protocol
+
+
+class CandidateSelector(Protocol):
+    def select(self, prompt: str) -> ParsedIntent: ...
+```
+
+The composition root injects `AnthropicCandidateSelector`, configured by `ANTHROPIC_API_KEY` and a pinned `ANTHROPIC_MODEL_ID`. No other pipeline or domain module imports the Anthropic SDK. This is provider isolation, not runtime multi-provider selection.
+
+`KIRO_API_KEY` is not an application credential. Official Kiro documentation scopes it to headless Kiro CLI authentication and does not document direct model-provider access. Kiro credits likewise must not be assumed to pay for deployed inference.
 
 ## 4. Time model
 
@@ -137,7 +179,7 @@ Production Places Text Search requests include `places.timeZone`. The `timeZone.
 2. If Claude extracted an explicit date, validate it in that zone.
 3. Otherwise resolve “today” in the origin zone at request time.
 4. Require every retained stop to have the same timezone ID.
-5. Build zoned instants with a pinned Temporal-compatible implementation during Phase 3.
+5. Build aware `datetime` values with `zoneinfo.ZoneInfo`. A dedicated helper tests both `fold` values and round-trips through UTC so ambiguous and nonexistent wall times are rejected rather than normalized silently.
 6. Reject ambiguous or nonexistent local boundary times instead of silently selecting an offset.
 
 ### 4.3 Opening-period normalization
@@ -155,7 +197,7 @@ A visit is feasible only when one interval can contain its entire duration. An a
 
 ## 5. Visit-duration model
 
-Claude selects one fixed category and an integer duration. The Zod schema encodes the minimum and maximum from requirements. Defaults are used in the Claude prompt as guidance, not injected after an invalid response.
+The production Claude selector proposes one fixed category and integer duration. Pydantic field/model validators encode the minimum and maximum from requirements. Defaults are guidance in the provider prompt, not values injected after invalid output.
 
 An out-of-range model estimate triggers one repair call containing only validation errors and the required schema. A second invalid result fails. No clamping occurs.
 
@@ -222,17 +264,20 @@ Route points are indexed:
 
 The max product case is ten points and 100 directed elements. The service requests all points as origins and destinations in one matrix call.
 
-```ts
-type MatrixEdge = {
-  originIndex: number;
-  destinationIndex: number;
-  distanceMeters: number | null;
-  durationSeconds: number | null;
-  reachable: boolean;
-};
+```python
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class MatrixEdge:
+    origin_index: int
+    destination_index: int
+    distance_meters: int | None
+    duration_seconds: int | None
+    reachable: bool
 ```
 
-The parser pre-fills every diagonal as `{ distanceMeters: 0, durationSeconds: 0, reachable: true }` because valid provider diagonal elements may omit `distanceMeters`; it initializes every off-diagonal cell as unreachable, then fills those cells only from valid provider elements. It never copies `[a][b]` to `[b][a]`.
+The parser pre-fills every diagonal as `MatrixEdge(..., distance_meters=0, duration_seconds=0, reachable=True)` because valid provider diagonal elements may omit `distanceMeters`; it initializes every off-diagonal cell as unreachable, then fills those cells only from valid provider elements. It never copies `[a][b]` to `[b][a]`.
 
 ## 9. Exact solver
 
@@ -345,7 +390,7 @@ If naive and optimized sequences are identical, return `same_order`, zero deltas
 
 ## 12. Maps handoff
 
-Build the full cross-platform URL using `URL` and `URLSearchParams`, `api=1`, ordered origin/destination/waypoint labels, matching place-ID parameters, and `travelmode=walking|driving`.
+Build the full cross-platform URL with `urllib.parse.urlencode`, `api=1`, ordered origin/destination/waypoint labels, matching place-ID parameters, and `travelmode=walking|driving`. Validate the fully encoded ASCII URL rather than an unencoded parameter representation.
 
 The full URL is valid only when:
 
@@ -355,20 +400,21 @@ The full URL is valid only when:
 
 For mobile-browser compatibility, also partition route points into overlapping parts that contain at most five points each: origin, up to three intermediates, destination. The destination of one part becomes the origin of the next. Every part receives the same encoding and length checks.
 
-```ts
-type MapsHandoff = {
-  fullRouteUrl: string | null;
-  fullRouteUniversallySupported: boolean;
-  browserSafeParts: Array<{
-    part: number;
-    totalParts: number;
-    startStopIndex: number;
-    endStopIndex: number;
-    url: string;
-  }>;
-  warningCode?: 'MOBILE_WAYPOINT_LIMIT' | 'FULL_URL_TOO_LONG';
-  errorCode?: 'HANDOFF_UNAVAILABLE';
-};
+```python
+class MapsHandoffPart(ApiModel):
+    part: int
+    total_parts: int
+    start_stop_index: int
+    end_stop_index: int
+    url: str
+
+
+class MapsHandoff(ApiModel):
+    full_route_url: str | None
+    full_route_universally_supported: bool
+    browser_safe_parts: list[MapsHandoffPart]
+    warning_code: Literal["MOBILE_WAYPOINT_LIMIT", "FULL_URL_TOO_LONG"] | None = None
+    error_code: Literal["HANDOFF_UNAVAILABLE"] | None = None
 ```
 
 No part uses decorative labels such as “morning” unless those boundaries exist in the schedule.
@@ -386,7 +432,7 @@ createdAt: ISO timestamp
 expiresAt: epoch seconds, now + 30 days
 ```
 
-The raw deletion token is returned exactly once and kept separate from the public share URL. `DELETE` compares its digest in constant time before conditional deletion; a viewer with only the URL cannot delete. The original prompt, IP hash, duration evidence, raw provider responses, and raw Claude output are never included. Reads enforce `expiresAt` even before DynamoDB TTL deletion.
+The raw deletion token is returned exactly once and kept separate from the public share URL. `DELETE` computes the candidate digest and checks it with `hmac.compare_digest` before conditional deletion; a viewer with only the URL cannot delete. The original prompt, IP hash, duration evidence, raw provider responses, and raw Claude output are never included. Reads enforce `expiresAt` even before DynamoDB TTL deletion.
 
 ## 14. Rate limiting
 
@@ -403,32 +449,35 @@ An atomic conditional update permits counts 1–5 and rejects later requests. Th
 
 ## 15. Response model
 
-```ts
-type ItineraryResponse = {
-  schemaVersion: 1;
-  requestId: string;
-  status: 'complete' | 'partial';
-  locality: { name: string; timeZoneId: string; date: string };
-  travelMode: TravelMode;
-  window: { start: string; end: string };
-  origin: GroundedPlace;
-  stops: ItineraryStop[];
-  timeline: Array<TravelEntry | WaitEntry | VisitEntry>;
-  droppedStops: DroppedStop[];
-  comparison: RouteComparison | { status: 'unavailable'; diagnostic: Diagnostic };
-  mapsHandoff: MapsHandoff;
-  totals: {
-    visitSeconds: number;
-    travelSeconds: number;
-    waitSeconds: number;
-    elapsedSeconds: number;
-  };
-  diagnostics: Diagnostic[];
-  shareProof: {
-    expiresAt: string;
-    hmac: string;
-  };
-};
+```python
+class Totals(ApiModel):
+    visit_seconds: int
+    travel_seconds: int
+    wait_seconds: int
+    elapsed_seconds: int
+
+
+class ShareProof(ApiModel):
+    expires_at: datetime
+    hmac: str
+
+
+class ItineraryResponse(ApiModel):
+    schema_version: Literal[1] = 1
+    request_id: str
+    status: Literal["complete", "partial"]
+    locality: Locality
+    travel_mode: TravelMode
+    window: TimeWindow
+    origin: GroundedPlace
+    stops: list[ItineraryStop]
+    timeline: list[TravelEntry | WaitEntry | VisitEntry]
+    dropped_stops: list[DroppedStop]
+    comparison: RouteComparison | ComparisonUnavailable
+    maps_handoff: MapsHandoff
+    totals: Totals
+    diagnostics: list[Diagnostic]
+    share_proof: ShareProof
 ```
 
 User-facing text is rendered from diagnostic codes and typed parameters in the frontend, not provider or model prose.
@@ -450,7 +499,7 @@ User-facing text is rendered from diagnostic codes and typed parameters in the f
 
 ## 17. Security, privacy, and observability
 
-- Zod validates requests, Claude output, provider responses, cache data, shares, and final responses.
+- Strict Pydantic v2 models validate requests, Claude output, provider responses, cache data, shares, and final responses.
 - React receives no raw model prose or provider errors.
 - Secrets remain environment-only.
 - Raw prompts are processed in memory and excluded from structured logs and shares.
@@ -484,7 +533,7 @@ User-facing text is rendered from diagnostic codes and typed parameters in the f
 
 ### Benchmark
 
-Run 8! and 9! representative schedules in a Lambda-equivalent Node runtime at the configured memory. Record median and p95 after warm-up in `DEVLOG.md`. Optimize only if evidence requires it, preserving exactness.
+Run 8! and 9! representative schedules in Python 3.12 at the configured Lambda memory, both locally under the deployment build and in a deployed smoke benchmark. Record median and p95 after warm-up in `DEVLOG.md`. Optimize only if evidence requires it, preserving exactness.
 
 ## 19. Rejected alternatives
 

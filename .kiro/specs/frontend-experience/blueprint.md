@@ -193,7 +193,7 @@ The result uses exactly one map. It proves the comparison and synchronizes with 
 
 ### Honest baseline
 
-The naive baseline is the final retained stop set in Claude candidate order. It uses the same origin, destination/return rule, mode, and route options as the optimized order. Dropped stops are absent from both routes and shown separately.
+The naive baseline is the final retained stop set in typed candidate order. It uses the same origin, destination/return rule, mode, and route options as the optimized order. Dropped stops are absent from both routes and shown separately.
 
 ### Four-second hierarchy
 

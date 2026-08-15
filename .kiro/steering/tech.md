@@ -9,9 +9,9 @@ inclusion: always
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
 | Frontend | React SPA (TypeScript) | Design-heavy, mobile-first. Deployed to S3 + CloudFront. |
-| Backend | AWS Lambda (TypeScript, API Gateway) | Small typed API surface for planning and anonymous shares. No server to manage. |
+| Backend | AWS Lambda (Python 3.12, API Gateway HTTP API, Lambda Powertools) | Small validated API surface for planning and anonymous shares. No server to manage. |
 | Storage | DynamoDB | Explicit anonymous shares, split-freshness place cache, and HMAC-keyed request limits. No relational needs. |
-| AI | Claude (Anthropic) | Structured output for candidate stop selection. Never free text to the user. |
+| AI | Provider-isolated candidate selector; Anthropic Claude in production | Pydantic-validated structured candidates. No model prose is rendered to the user. |
 | Maps | Google Maps Platform (Places API New, Routes API, Maps JavaScript API) | Grounding, travel-time matrix, map preview, and the handoff. |
 | Hosting | S3 + CloudFront + ACM cert on `vialo.place` | HTTPS enforced, global CDN. |
 | DNS | Cloudflare (DNS-only, grey cloud) | Points at CloudFront distribution. |
@@ -25,6 +25,10 @@ This is the core of Vialo. Each step uses the right tool for what it's actually 
 Claude receives the user's natural-language request (city, time budget, interests, mode) and returns **typed structured output**: an array of candidate stops with name, approximate category, and suggested visit duration. The model is good at "what's worth seeing" — use it for that.
 
 Do **not** use Places API for discovery. It's expensive, slow, and worse than the model at cultural/contextual recommendations.
+
+The pipeline depends on a narrow Python `CandidateSelector` protocol, not directly on the Anthropic SDK. The production composition root wires one Claude adapter using a separate server-side `ANTHROPIC_API_KEY` and pinned model ID. This isolates provider code without adding runtime provider selection or an untested fallback.
+
+Do not use `KIRO_API_KEY` in the application. Official Kiro documentation defines it as authentication for headless `kiro-cli chat --no-interactive` sessions; it does not document direct model-provider access. Kiro credits are documented for Kiro requests and agentic requests, so they must not be assumed to fund deployed Vialo inference.
 
 ### Step 2 — Places API grounds each stop
 
@@ -52,7 +56,7 @@ Treat the matrix as **directed**. The validated walking fixture returned 518 sec
 
 ### Step 4 — Exact ordering with time-window constraints
 
-With ≤9 stops, there are at most 9! = 362,880 permutations (8! = 40,320 if origin is fixed). For each permutation:
+With ≤9 visit stops and a fixed origin, there are at most 9! = 362,880 visit-stop permutations. For each permutation:
 1. Simulate the day forward: accumulate travel time, any required wait, and visit duration.
 2. If arrival is before opening, wait until opening and expose that wait in the schedule.
 3. Reject any permutation where a place is closed that day, the visit cannot finish before closing, or the completed route exceeds the user's time budget.
@@ -75,15 +79,20 @@ Build a `https://www.google.com/maps/dir/?api=1` URL using documented Maps URL p
 ## Infrastructure
 
 ### Frontend deployment
-- S3 bucket with static website hosting disabled (CloudFront handles routing)
-- CloudFront distribution with the ACM cert for `vialo.place`
-- SPA routing: CloudFront custom error response returns `index.html` for 403/404
+- S3 bucket with static website hosting disabled; CloudFront serves the SPA and owns TLS for `vialo.place`
+- CloudFront routes `/api/*` to API Gateway HTTP API and all other application paths to S3, keeping browser requests same-origin
+- SPA routing returns `index.html` for application routes such as `/r/<shareId>` without masking real `/api/*` errors
 
 ### Backend deployment
-- Single Lambda function behind API Gateway (or Function URL)
-- Environment variables for API keys and server-only HMAC secrets; no secrets in request payloads or logs
-- Memory: 512MB (sufficient for brute-force permutation solver)
-- Timeout: 30s (allows for Places API latency on uncached lookups)
+- One Python 3.12 Lambda behind API Gateway HTTP API, exposing planning plus share create/read/delete routes
+- AWS Lambda Powertools `APIGatewayHttpResolver` for routing, structured logging, correlation IDs, and metrics; no FastAPI or Mangum
+- Strict Pydantic v2 models at request, provider, cache, share, and response boundaries; public JSON uses camelCase aliases
+- `httpx` and direct Google REST adapters; Anthropic's Python SDK behind `CandidateSelector`; `boto3` repositories for DynamoDB
+- Standard-library `datetime` and `zoneinfo` for local-time arithmetic with explicit ambiguity/nonexistence checks
+- AWS SAM `infra/template.yaml` for HTTP API, Lambda, DynamoDB, log retention, S3, and CloudFront
+- Environment variables for API keys, model ID, table names, and server-only HMAC secrets; no secrets in payloads or logs
+- Start at 512MB and a 30-second timeout, then retain or adjust memory only from 8!/9! benchmark and end-to-end latency evidence
+- Keep provider timeouts and bounded retries inside a request-level budget that returns before API Gateway/Lambda termination
 
 ### DynamoDB tables
 - `place-cache`: `PLACE#<placeId>` partitions with `PROFILE`, `HOURS#REGULAR`, and `HOURS#DATE#<date>` sort keys; each item has application-checked expiry plus TTL
@@ -92,8 +101,8 @@ Build a `https://www.google.com/maps/dir/?api=1` URL using documented Maps URL p
 
 ## Security rules — non-negotiable
 
-1. **API keys server-side only.** The frontend bundle never contains Google or Anthropic credentials. The browser key for Maps JS API is referrer-restricted and has only the Maps JavaScript API enabled.
-2. **Structured output only.** The model returns typed intent and candidate objects. No model prose is rendered to the page; deterministic code grounds, solves, and templates every result.
+1. **API keys server-side only.** The frontend bundle never contains Google or Anthropic credentials. `ANTHROPIC_API_KEY` is separate from Kiro authentication and exists only in Lambda configuration. `KIRO_API_KEY` is never an application runtime secret. The browser key for Maps JS API is referrer-restricted and has only the Maps JavaScript API enabled.
+2. **Structured output only.** The Anthropic adapter returns Pydantic-validated intent and candidate objects through `CandidateSelector`. No model prose is rendered to the page; deterministic Python code grounds, solves, and templates every result.
 3. **Server-side scope check.** Before calling Claude or any paid API: is this a place-and-time request? Off-topic input gets a canned refusal with zero API spend.
 4. **Per-IP rate limiting.** 5 requests/hour using a DynamoDB atomic counter keyed by a server-HMAC of the IP. Never persist or log the raw IP.
 5. **Input length cap.** Max 500 characters for the user prompt. Reject longer input before processing.

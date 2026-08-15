@@ -15,21 +15,23 @@
 
 ## Wave 1 — Workspace, schemas, and pure time logic
 
-- [ ] **1. Create the backend TypeScript package and validation foundation**
-  - Add pinned runtime/test dependencies, strict TypeScript, Vitest, and production/test scripts.
-  - Create directories from structure steering and direct imports without barrel files.
+- [ ] **1. Create the Python backend package and validation foundation**
+  - Create a Python 3.12 `pyproject.toml`, `src/vialo` package, and committed `uv.lock` with exact resolved runtime/test dependencies.
+  - Configure Ruff, mypy strict mode, pytest, coverage, and absolute `vialo` imports using the directories from structure steering.
+  - Add the initial AWS SAM template and Lambda Powertools handler entry point without implementing pipeline behavior.
   - Add environment schema with placeholders documented in `.env.example`.
   - _Requirements: 1.1–1.3, 12.6_
 
 - [ ] **2. Implement request, intent, provider, and response schemas** *(parallel after task 1)*
-  - Define strict Zod schemas and inferred TypeScript types.
+  - Define strict Pydantic v2 request, candidate, provider, cache, share, and response models with camelCase JSON aliases.
   - Encode category-specific duration bounds and provenance.
   - Define stable diagnostic codes and schema version 1.
-  - Test unknown keys, invalid ranges, stop cap, and malformed provider values.
+  - Export versioned JSON Schema and add a frontend contract-drift check.
+  - Test unknown keys, strict-type failures, invalid ranges, stop cap, aliases, and malformed provider values.
   - _Requirements: 1, 2, 3, 12.1, 12.7_
 
 - [ ] **3. Implement timezone and opening-hours normalization** *(parallel after task 1)*
-  - Use the IANA `timeZone.id` and a pinned Temporal-compatible implementation.
+  - Use standard-library aware `datetime` and `zoneinfo.ZoneInfo` with explicit fold/UTC-round-trip checks for ambiguous and nonexistent local times.
   - Resolve local today after origin grounding.
   - Derive the seven-local-date current-hours coverage window; normalize current, regular, split, overnight, truncated, 24-hour, and closed periods without recurring-hours fallback inside authoritative coverage.
   - Reject ambiguous/nonexistent local times and missing hours.
@@ -53,12 +55,15 @@
   - Test concurrency, rollover, expiry, and absence of raw IP storage/logging.
   - _Requirements: 1.5–1.6, 12.3–12.4_
 
-- [ ] **6. Implement Claude structured intent and candidate selection**
+- [ ] **6. Implement the candidate-selector boundary and production Claude adapter**
+  - Define a provider-neutral Python `CandidateSelector` protocol and inject it at the composition root.
+  - Implement one Anthropic Claude adapter using the pinned Python SDK, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL_ID`; never use `KIRO_API_KEY` in application runtime.
   - Build the schema-constrained request and approved system prompt.
   - Preserve candidate order, priorities, category, duration, and provenance.
   - Verify every `user` duration through an exact prompt span and deterministic duration parser, then strip the evidence.
   - Add one bounded repair attempt for invalid structured output.
-  - Mock the HTTP boundary and test invalid schema, excess stops, valid user overrides, and fabricated/mismatched duration evidence.
+  - Mock the adapter boundary and test invalid schema, excess stops, valid user overrides, fabricated/mismatched duration evidence, timeout mapping, and one repair attempt.
+  - Prove pipeline/domain tests use the protocol and do not import the Anthropic SDK.
   - _Requirements: 2_
 
 **Wave 2 demo:** A prompt produces validated typed intent and bounded candidates; invalid/off-topic/rate-limited requests stop before paid map calls.
@@ -67,13 +72,14 @@
 
 - [ ] **7. Implement the Places Text Search adapter**
   - Request the exact production field mask, including `places.timeZone` and attribution-bearing photos.
+  - Use a shared timeout-configured `httpx.Client` and direct Places REST payloads/field masks.
   - Resolve origin/candidates within locality and reject ambiguity.
   - Deduplicate by Place ID and enforce one timezone.
   - Test against the canonical Places fixture plus a typed timezone augmentation.
   - _Requirements: 3_
 
 - [ ] **8. Implement the `place-cache` repository** *(parallel with task 7)*
-  - Add `PROFILE`, `HOURS#REGULAR`, `HOURS#DATE`, and query-resolution item handling.
+  - Implement the boto3 repository and add `PROFILE`, `HOURS#REGULAR`, `HOURS#DATE`, and query-resolution item handling.
   - Enforce application expiry separately from DynamoDB TTL.
   - Test fresh, stale, partially fresh, corrupt, and write-failure cases.
   - _Requirements: 5_
@@ -89,7 +95,7 @@
 ## Wave 4 — Directed matrix and exact solver
 
 - [ ] **10. Implement the Routes matrix adapter**
-  - Build origin + retained stop inputs with a maximum of ten points.
+  - Use direct Routes REST calls through `httpx` and build origin + retained stop inputs with a maximum of ten points.
   - Request and parse the six required matrix fields.
   - Initialize missing cells as unreachable and preserve directed asymmetry.
   - Assert the canonical fixture remains 592m with 518s/508s reverse durations.
@@ -98,7 +104,7 @@
 - [ ] **11. Implement exact permutation scheduling** *(parallel pure-domain work after task 2)*
   - Simulate travel, wait, visits, split intervals, window end, and optional return.
   - Apply the objective and deterministic tie-break cascade.
-  - Add property/invariant tests and focused synthetic scenarios.
+  - Add pytest parameterization, Hypothesis properties/invariants, and focused synthetic scenarios.
   - _Requirements: 7_
 
 - [ ] **12. Implement deterministic stop dropping and diagnostics**
@@ -109,7 +115,7 @@
   - _Requirements: 8, 9.7_
 
 - [ ] **13. Benchmark exactness at the product cap**
-  - Benchmark representative 8! and 9! schedules after warm-up in a Lambda-equivalent runtime.
+  - Benchmark representative 8! and 9! schedules after warm-up in Python 3.12 using the SAM deployment build and configured Lambda memory.
   - Record median/p95 and permutations evaluated in `DEVLOG.md`.
   - Add safe branch-and-bound pruning only if required; prove outputs match exhaustive reference cases.
   - _Requirements: 7.7–7.8_
@@ -119,7 +125,7 @@
 ## Wave 5 — Real geometry and handoff
 
 - [ ] **14. Implement the ordered `computeRoutes` adapter**
-  - Preserve caller order with optimization disabled.
+  - Implement the direct `computeRoutes` REST adapter with strict Pydantic parsing; preserve caller order with optimization disabled.
   - Build origin/intermediate/destination fields mechanically for open and return routes, including the zero-intermediate one-stop case.
   - Request high-quality encoded route and leg geometry/metrics with the same departure-time policy and modifiers.
   - Capture and sanitize a real geometry response fixture before claiming integration completion.
@@ -146,7 +152,7 @@
 ## Wave 6 — Sharing, orchestration, and reliability
 
 - [ ] **17. Implement explicit anonymous sharing**
-  - Generate and constant-time verify the expiring canonical itinerary HMAC proof envelope.
+  - Generate the expiring canonical itinerary HMAC proof envelope and verify it with `hmac.compare_digest`.
   - Make proof retries idempotent and store only validated computed output after `POST /shares`.
   - Return a creator deletion token once, store only its server-HMAC digest, and require it for `DELETE /shares/{id}`.
   - Enforce random ID, 30-day application expiry, and DynamoDB TTL.
@@ -155,24 +161,25 @@
 
 - [ ] **18. Implement provider resilience and structured observability** *(parallel with task 17)*
   - Add per-call timeout and at most two jittered retries for retryable failures.
-  - Add request/pipeline latency, cache, matrix, solver, and stable-code logs.
+  - Use Lambda Powertools Logger/Metrics for correlation IDs, request/pipeline latency, cache, matrix, solver, and stable-code telemetry.
   - Add tests proving prompts, IPs, secrets, and raw provider/model bodies never enter logs.
   - _Requirements: 12.1–12.5_
 
 - [ ] **19. Compose the Lambda/API handler**
-  - Wire validation → guard → rate limit → Claude → Places/cache → matrix → solver → geometry → handoff.
-  - Implement `POST /itineraries`, `POST /shares`, `GET /shares/{id}`, and creator-authorized `DELETE /shares/{id}`.
+  - Wire validation → guard → rate limit → `CandidateSelector` → Places/cache → matrix → solver → geometry → handoff.
+  - Implement `POST /itineraries`, `POST /shares`, `GET /shares/{id}`, and creator-authorized `DELETE /shares/{id}` with `APIGatewayHttpResolver`.
+  - Define the HTTP API, Lambda, DynamoDB tables, environment variables, IAM, and explicit log retention in `infra/template.yaml`.
   - Map all failures to typed status codes without raw internals.
   - _Requirements: all_
 
 - [ ] **20. Add integration and contract tests**
-  - Mock all provider HTTP boundaries using canonical and newly captured sanitized fixtures.
+  - Use pytest to mock all provider HTTP/AWS boundaries with canonical and newly captured sanitized fixtures; no live calls in ordinary tests.
   - Test complete, partial, no-feasible, provider-error, one-stop/same-order, signed metric divergence, comparison-unavailable, handoff-fallback, share create/read/delete, and rate-limit flows.
-  - Snapshot only stable typed contracts, never provider prose.
+  - Validate stable Pydantic JSON Schema and camelCase contract fixtures, never provider prose.
   - _Requirements: all_
 
 - [ ] **21. Run the backend completion gate**
-  - Run unit/integration tests, typecheck, lint, build, diff checks, and credential scan.
+  - Run `uv run pytest`, Ruff check/format verification, strict mypy, JSON Schema contract checks, `sam validate`, `sam build`, diff checks, and credential scan.
   - Confirm exact 9-stop benchmark evidence is recorded.
   - Confirm no feature uses hard-coded production results.
   - Append the implementation outcome and corrections to `DEVLOG.md`.

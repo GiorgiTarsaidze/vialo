@@ -77,3 +77,17 @@ The visual workflow will be agent-led rather than dependent on external design f
 ### Independent review and corrections
 
 Independent backend, UX/accessibility, security/privacy, and release audits returned PASS with no blocker or major findings. Review follow-ups reconciled the mobile one-map order, made zero-distance matrix diagonal initialization explicit, reused strict protobuf-duration parsing for route geometry, and preserved fixed-window rate-limit behavior as an intentional low-cost guardrail.
+
+## 2026-08-15 — Python Lambda architecture and model-provider boundary
+
+### Architecture correction before implementation
+
+The first backend specification inherited a TypeScript Lambda assumption from early steering. Before Phase 3 code began, the architecture was deliberately changed to one Python 3.12 Lambda behind API Gateway HTTP API. The corrected stack uses Lambda Powertools routing and telemetry, strict Pydantic v2 boundary models, direct Google REST adapters through `httpx`, boto3 repositories, standard-library `datetime`/`zoneinfo`, pytest with Hypothesis, Ruff, strict mypy, a committed `uv.lock`, and AWS SAM.
+
+Public API JSON remains camelCase while Python remains idiomatic snake_case. Pydantic exports a versioned JSON Schema so the React TypeScript frontend can generate or verify contracts instead of relying on a shared backend language. The deterministic solver and opening-hours domain stay free of Lambda, AWS, Google, and model-provider imports.
+
+### Model-provider decision
+
+Candidate selection now depends on a narrow Python `CandidateSelector` protocol. Production wires one Anthropic Claude adapter with a separately configured server-side Anthropic API key and pinned model ID. This isolates the provider SDK without claiming runtime multi-provider selection or an untested fallback.
+
+Official Kiro documentation was checked before considering Kiro credentials for the application. `KIRO_API_KEY` is documented for authenticating headless `kiro-cli chat --no-interactive` automation. Kiro usage documentation describes credits in terms of Kiro requests and agentic requests; it does not document direct model-provider API access or deployed-application inference paid from those credits. Vialo therefore does not place `KIRO_API_KEY` in Lambda and does not budget Kiro credits for production inference.
