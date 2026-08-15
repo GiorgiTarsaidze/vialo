@@ -10,6 +10,10 @@ node_modules/
 dist/
 build/
 coverage/
+.coverage
+backend/layer/python/
+backend/layer/requirements.txt
+.aws-sam/
 
 # Logs and local tooling
 *.log
@@ -17,6 +21,12 @@ coverage/
 .vscode/
 .idea/
 .playwright-mcp/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
 
 # Large local Kiro evidence captures
 docs/kiro-evidence/raw/

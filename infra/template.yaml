@@ -1,0 +1,316 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Vialo backend — itinerary engine (dev)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    MemorySize: 512
+    Timeout: 30
+    Architectures:
+      - arm64
+    Tags:
+      Project: vialo
+      vialo: "true"
+      Environment: dev
+      ManagedBy: sam
+
+Parameters:
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+  AnthropicModelId:
+    Type: String
+    Default: claude-sonnet-4-20250514
+  GooglePlacesKey:
+    Type: String
+    NoEcho: true
+  GoogleRoutesKey:
+    Type: String
+    NoEcho: true
+  RateLimitHmacSecret:
+    Type: String
+    NoEcho: true
+  ShareSigningSecret:
+    Type: String
+    NoEcho: true
+  ShareDeletionSecret:
+    Type: String
+    NoEcho: true
+  LogLevel:
+    Type: String
+    Default: INFO
+
+Resources:
+  # --- Log Group (created before function to avoid race) ---
+  VialoLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/vialo-backend-dev
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+  VialoApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/apigateway/vialo-backend-dev
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+  # --- IAM Role (explicit least-privilege) ---
+  VialoFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: vialo-backend-dev-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: vialo-cloudwatch-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${VialoLogGroup.Arn}:*"
+        - PolicyName: vialo-dynamodb-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:TransactWriteItems
+                Resource:
+                  - !GetAtt PlaceCacheTable.Arn
+                  - !GetAtt SharedItinerariesTable.Arn
+                  - !GetAtt RequestLimitsTable.Arn
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+  # --- API ---
+  VialoApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      AccessLogSettings:
+        DestinationArn: !GetAtt VialoApiLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency"}
+      CorsConfiguration:
+        AllowOrigins:
+          - "https://vialo.place"
+        AllowMethods:
+          - POST
+          - GET
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - X-Share-Delete-Token
+      Tags:
+        Project: vialo
+        vialo: "true"
+        Environment: dev
+        ManagedBy: sam
+
+  # --- Lambda Function ---
+  VialoFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: VialoLogGroup
+    Properties:
+      FunctionName: vialo-backend-dev
+      Handler: vialo.handler.lambda_handler
+      CodeUri: ../backend/src
+      Role: !GetAtt VialoFunctionRole.Arn
+      Layers:
+        - !Ref VialoDepsLayer
+      Environment:
+        Variables:
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          ANTHROPIC_MODEL_ID: !Ref AnthropicModelId
+          GOOGLE_PLACES_KEY: !Ref GooglePlacesKey
+          GOOGLE_ROUTES_KEY: !Ref GoogleRoutesKey
+          DYNAMODB_TABLE_CACHE: !Ref PlaceCacheTable
+          DYNAMODB_TABLE_SHARES: !Ref SharedItinerariesTable
+          DYNAMODB_TABLE_RATE_LIMITS: !Ref RequestLimitsTable
+          RATE_LIMIT_HMAC_SECRET: !Ref RateLimitHmacSecret
+          SHARE_SIGNING_SECRET: !Ref ShareSigningSecret
+          SHARE_DELETION_SECRET: !Ref ShareDeletionSecret
+          POWERTOOLS_SERVICE_NAME: vialo-api
+          LOG_LEVEL: !Ref LogLevel
+      Events:
+        PlanItinerary:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/itineraries
+            Method: POST
+        CreateShare:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/shares
+            Method: POST
+        GetShare:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/shares/{shareId}
+            Method: GET
+        DeleteShare:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/shares/{shareId}
+            Method: DELETE
+      Tags:
+        Project: vialo
+        vialo: "true"
+        Environment: dev
+        ManagedBy: sam
+
+  # --- Layer ---
+  # NOTE: AWS::Serverless::LayerVersion (CFN LayerVersion) does not support Tags property.
+  # Apply tags post-deploy via: aws lambda tag-resource --resource <layer-version-arn> --tags ...
+  VialoDepsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: vialo-deps-dev
+      ContentUri: ../backend/layer/
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
+      BuildArchitecture: arm64
+
+  # --- DynamoDB Tables (on-demand, PITR off) ---
+  PlaceCacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: vialo-place-cache-dev
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+  SharedItinerariesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: vialo-shared-itineraries-dev
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: "vialo"
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+  RequestLimitsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: vialo-request-limits-dev
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway URL
+    Value: !Sub "https://${VialoApi}.execute-api.${AWS::Region}.amazonaws.com"
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt VialoFunction.Arn

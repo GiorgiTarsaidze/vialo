@@ -91,3 +91,60 @@ Public API JSON remains camelCase while Python remains idiomatic snake_case. Pyd
 Candidate selection now depends on a narrow Python `CandidateSelector` protocol. Production wires one Anthropic Claude adapter with a separately configured server-side Anthropic API key and pinned model ID. This isolates the provider SDK without claiming runtime multi-provider selection or an untested fallback.
 
 Official Kiro documentation was checked before considering Kiro credentials for the application. `KIRO_API_KEY` is documented for authenticating headless `kiro-cli chat --no-interactive` automation. Kiro usage documentation describes credits in terms of Kiro requests and agentic requests; it does not document direct model-provider API access or deployed-application inference paid from those credits. Vialo therefore does not place `KIRO_API_KEY` in Lambda and does not budget Kiro credits for production inference.
+
+## 2026-08-15 — Phase 3 backend implementation and AWS deployment
+
+### Implemented
+
+- Added the Python 3.12 Lambda backend with strict camelCase Pydantic contracts, Lambda Powertools routing/telemetry, a provider-neutral `CandidateSelector`, and the production Anthropic adapter.
+- Implemented the zero-spend scope guard, HMAC-keyed fixed-window rate limiting, deterministic user-duration evidence validation, and bounded category estimates.
+- Implemented separate origin grounding, deterministic Places ambiguity handling, same-timezone enforcement, and split-freshness DynamoDB cache records for query resolution, profile, recurring hours, and requested-date current hours.
+- Normalized explicit-date, recurring, split, overnight, always-open, and previous-day opening periods with requested-date clipping and explicit DST gap/fold rejection. Missing hours never imply open.
+- Preserved the Routes matrix as directed and implemented exact fixed-origin permutation solving, deterministic tie-breaks, explicit waits, progressive dropping, and stable original matrix indices for naive simulation.
+- Added two real ordered `computeRoutes` production calls for honest naive-versus-optimized geometry, documented Google Maps URL place-ID fields, browser-safe overlapping route parts, and a strict 2,048-character guard. Geometry failure omits both lines rather than inventing one.
+- Added canonical HMAC share proofs, one-transaction proof claim/share creation, public 30-day shares, creator-only deletion tokens stored as server-HMAC digests, typed error routes, bounded retries, and sanitized provider failures.
+- Built third-party packages into a dependency-only Python 3.12 ARM64 layer while retaining only first-party `vialo` source in the function artifact.
+
+### Hardening and review
+
+Two independent backend/infrastructure reviews passed without blocker or major findings. Follow-up hardening covered transport-wide `httpx.RequestError` retries, requested-date cache refresh despite a fresh profile, authoritative cached closures, malformed provider clock handling, atomic share creation, exact user-duration provenance, route-part reconstruction, and low-cardinality cache/latency telemetry. No prompt, raw IP, provider body, secret, or model prose is stored in shares or emitted to application/access logs.
+
+### Local validation and exact-solver evidence
+
+The final gate passed:
+
+- 225 pytest tests with 85% statement coverage;
+- Ruff lint and format checks;
+- strict mypy across source and tests;
+- source and transformed SAM validation plus a successful SAM build;
+- source-only function/dependency-only layer separation;
+- repository safety validation;
+- ARM64 layer verification with two CPython 3.12 AArch64 native extensions, 33,643,491 uncompressed bytes, and 18,749,626 zipped bytes.
+
+A final single benchmark run completed 8! in 0.215 seconds and 9! in 2.096 seconds. A separate warmed 10-sample Python 3.12 run measured nearest-rank p95:
+
+| Case | Permutations | Warm-up | Median | p95 | Range |
+|---|---:|---:|---:|---:|---:|
+| 8! | 40,320 | 0.193 s | 0.189 s | 0.194 s | 0.187–0.194 s |
+| 9! | 362,880 | 1.884 s | 1.899 s | 1.956 s | 1.847–1.956 s |
+
+These are local host measurements, not a deployed 512 MB Lambda latency claim.
+
+### AWS deployment and smoke evidence
+
+CloudFormation created the isolated `vialo-backend-dev` stack in `us-east-1`. The API endpoint is `https://ap9i8up7k7.execute-api.us-east-1.amazonaws.com`. The deployed resources are one Python 3.12 ARM64 Lambda, one dependency layer version, one HTTP API and default stage, two seven-day log groups, one explicit IAM role, and three on-demand DynamoDB tables. The artifact bucket is private, AES-256 encrypted, bucket-owner enforced, TLS-only, and expires objects after seven days.
+
+Deployed checks verified 512 MB memory, a 30-second timeout, no reserved or provisioned concurrency, PAY_PER_REQUEST billing, PITR disabled, TTL enabled, the exact four API routes, scoped IAM resources/actions without wildcards, and the required `Project=vialo`, `vialo=true`, `Environment=dev`, and `ManagedBy=sam` tags on every taggable resource. Lambda layer-version resources are not taggable through either CloudFormation or the Lambda tagging API; both attempted API forms were rejected, so the layer is the documented non-taggable exception.
+
+Only zero-provider-spend smokes were run because deployed provider values remain placeholders:
+
+- empty prompt → `400 INVALID_INPUT`;
+- off-topic prompt → `400 OFF_TOPIC`;
+- missing share → `404 SHARE_NOT_FOUND`;
+- delete without creator token → `401 INVALID_INPUT`.
+
+The successful off-topic invocation loaded the complete ARM64 function and layer, resolving the earlier local host inability to execute ARM64 containers. CloudWatch emitted structured request/cold-start/share metrics. Lambda logs contained no raw prompt or credential material, and API access logs contained only request ID, route key, status, response length, and integration latency.
+
+### Remaining live-evidence gates
+
+Real provider-dependent itinerary generation and paired route geometry were not invoked because Anthropic, Google Places, and Google Routes credentials were unavailable. A sanitized live `computeRoutes` geometry fixture and a deployed 512 MB solver benchmark therefore remain open evidence tasks; production has no fixture, simulated, or hard-coded fallback. Before enabling the complete flow, configure the three server-side provider credentials plus a supported pinned Anthropic model ID, create a separate referrer-restricted Maps JavaScript API browser key, and configure AWS/GCP budget notifications at 50%, 90%, and 100%.
