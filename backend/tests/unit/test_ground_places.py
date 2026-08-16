@@ -6,6 +6,8 @@ import datetime as dt
 from typing import Any
 from unittest.mock import MagicMock
 
+import time_machine
+
 from vialo.models.diagnostics import DiagnosticCode
 from vialo.models.providers import CandidateStop, StopCategory
 from vialo.pipeline.ground_places import ground_origin, ground_places
@@ -83,6 +85,7 @@ class TestGroundOrigin:
 class TestGroundPlacesHoursExclusion:
     """Stops with missing/unusable hours are excluded with diagnostics."""
 
+    @time_machine.travel(dt.datetime(2026, 8, 15, 12, tzinfo=dt.UTC), tick=False)
     def test_stop_with_valid_hours_included(self) -> None:
         """A stop with valid opening hours is included."""
         client = MagicMock()
@@ -130,6 +133,7 @@ class TestGroundPlacesHoursExclusion:
         assert stops[0].hours_source == "current"
         assert len(stops[0].open_intervals) == 1
 
+    @time_machine.travel(dt.datetime(2026, 8, 15, 12, tzinfo=dt.UTC), tick=False)
     def test_stop_with_no_hours_excluded(self) -> None:
         """A stop with no opening hours data is excluded, NEVER synthesizes 00:00-24:00."""
         client = MagicMock()
@@ -165,6 +169,7 @@ class TestGroundPlacesHoursExclusion:
             for iv in s.open_intervals:
                 assert iv.local_start != "00:00" or iv.local_end != "24:00"
 
+    @time_machine.travel(dt.datetime(2026, 8, 15, 12, tzinfo=dt.UTC), tick=False)
     def test_stop_closed_on_date_excluded(self) -> None:
         """A stop explicitly closed on the requested date is excluded."""
         client = MagicMock()

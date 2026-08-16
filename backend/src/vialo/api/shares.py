@@ -54,7 +54,7 @@ def create_share() -> Response:  # type: ignore[type-arg]
 
     # Validate with Pydantic model
     try:
-        request = CreateShareRequest.model_validate(body)
+        request = CreateShareRequest.model_validate_json(json.dumps(body))
     except ValidationError:
         return _error_response(
             DiagnosticCode.INVALID_INPUT.value,

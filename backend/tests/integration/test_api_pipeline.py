@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import time_machine
 
 from vialo.handler import lambda_handler
 from vialo.services.spend_limiter import BudgetExceededError, SpendLimiterUnavailableError
@@ -182,6 +183,7 @@ class TestOriginGrounding:
 class TestExcludedHours:
     """Stops with unavailable hours are excluded with diagnostics."""
 
+    @time_machine.travel(dt.datetime(2026, 8, 15, 12, tzinfo=dt.UTC), tick=False)
     def test_stops_excluded_for_missing_hours(self) -> None:
         """Stops without usable opening hours are excluded, never synthesize 00:00-24:00."""
         from vialo.models.providers import CandidateStop, StopCategory
@@ -266,6 +268,39 @@ class TestShareCreateReadDelete:
         event = _make_apigw_event("POST", "/api/shares", {})
         response = lambda_handler(event, _mock_context())
         assert response["statusCode"] == 400
+
+    def test_share_accepts_json_serialized_itinerary(self) -> None:
+        """POST accepts strict itinerary fields in their canonical JSON wire form."""
+        from tests.integration.test_share_repository_v2 import _make_itinerary
+        from vialo.models.shares import CreateShareResponse
+
+        itinerary = _make_itinerary()
+        proof = itinerary.share_proof
+        assert proof is not None
+        event = _make_apigw_event(
+            "POST",
+            "/api/shares",
+            {
+                "itinerary": itinerary.model_dump(by_alias=True, mode="json"),
+                "proof": proof.model_dump(by_alias=True, mode="json"),
+            },
+        )
+
+        with patch("vialo.api.shares._get_share_repo") as repo_factory:
+            repo = MagicMock()
+            repo.create.return_value = CreateShareResponse(
+                share_id="share-id",
+                share_url="https://vialo.place/r/share-id",
+                deletion_token="deletion-token",
+            )
+            repo_factory.return_value = repo
+            response = lambda_handler(event, _mock_context())
+
+        assert response["statusCode"] == 201
+        created_itinerary, created_proof = repo.create.call_args.args
+        assert created_itinerary.window.date == itinerary.window.date
+        assert created_itinerary.stops[0].category == itinerary.stops[0].category
+        assert created_proof == proof
 
     def test_get_nonexistent_share(self) -> None:
         """GET /api/shares/<id> for nonexistent share returns 404."""

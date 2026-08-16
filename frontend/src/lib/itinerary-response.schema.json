@@ -1,0 +1,985 @@
+{
+  "$defs": {
+    "ComparisonUnavailable": {
+      "additionalProperties": false,
+      "description": "Comparison cannot be computed.",
+      "properties": {
+        "reasonCode": {
+          "title": "Reasoncode",
+          "type": "string"
+        },
+        "status": {
+          "const": "unavailable",
+          "default": "unavailable",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reasonCode"
+      ],
+      "title": "ComparisonUnavailable",
+      "type": "object"
+    },
+    "Diagnostic": {
+      "additionalProperties": false,
+      "description": "A single diagnostic entry for the response.",
+      "properties": {
+        "candidateIndex": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidateindex"
+        },
+        "code": {
+          "$ref": "#/$defs/DiagnosticCode"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "stopName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stopname"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Diagnostic",
+      "type": "object"
+    },
+    "DiagnosticCode": {
+      "enum": [
+        "INVALID_INPUT",
+        "INVALID_DATE",
+        "INVALID_TIME_WINDOW",
+        "OFF_TOPIC",
+        "RATE_LIMITED",
+        "MODEL_OUTPUT_INVALID",
+        "ORIGIN_NOT_FOUND",
+        "PLACE_NOT_FOUND",
+        "DUPLICATE_PLACE",
+        "OUTSIDE_LOCALITY",
+        "HOURS_UNAVAILABLE",
+        "CLOSED_ON_DATE",
+        "LOCAL_TIME_AMBIGUOUS",
+        "ROUTE_NOT_FOUND",
+        "NO_REACHABLE_STOPS",
+        "NO_FEASIBLE_ITINERARY",
+        "COMPARISON_UNAVAILABLE",
+        "METRICS_DIVERGED",
+        "HANDOFF_UNAVAILABLE",
+        "SHARE_NOT_FOUND",
+        "PROVIDER_UNAVAILABLE",
+        "AI_BUDGET_EXCEEDED",
+        "INTERNAL_ERROR",
+        "WALKING_ROUTES_BETA",
+        "GROUNDING_EXCLUSION"
+      ],
+      "title": "DiagnosticCode",
+      "type": "string"
+    },
+    "DroppedStop": {
+      "additionalProperties": false,
+      "description": "Record for a stop that could not be scheduled.",
+      "properties": {
+        "candidateIndex": {
+          "title": "Candidateindex",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/DiagnosticCode"
+        },
+        "reasonDetail": {
+          "title": "Reasondetail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateIndex",
+        "name",
+        "reasonCode",
+        "reasonDetail"
+      ],
+      "title": "DroppedStop",
+      "type": "object"
+    },
+    "GroundedPlace": {
+      "additionalProperties": false,
+      "description": "A place resolved against Google Places API.",
+      "properties": {
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "formattedAddress": {
+          "title": "Formattedaddress",
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "photos": {
+          "items": {
+            "$ref": "#/$defs/PlacePhoto"
+          },
+          "title": "Photos",
+          "type": "array"
+        },
+        "placeId": {
+          "title": "Placeid",
+          "type": "string"
+        },
+        "primaryType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primarytype"
+        },
+        "timeZoneId": {
+          "title": "Timezoneid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "placeId",
+        "displayName",
+        "formattedAddress",
+        "location",
+        "timeZoneId"
+      ],
+      "title": "GroundedPlace",
+      "type": "object"
+    },
+    "GroundedStop": {
+      "additionalProperties": false,
+      "description": "A verified stop with place data and opening intervals.",
+      "properties": {
+        "candidateIndex": {
+          "title": "Candidateindex",
+          "type": "integer"
+        },
+        "category": {
+          "$ref": "#/$defs/StopCategory"
+        },
+        "durationSource": {
+          "enum": [
+            "user",
+            "model_estimate"
+          ],
+          "title": "Durationsource",
+          "type": "string"
+        },
+        "hoursSource": {
+          "enum": [
+            "current",
+            "regular"
+          ],
+          "title": "Hourssource",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "openIntervals": {
+          "items": {
+            "$ref": "#/$defs/OpenInterval"
+          },
+          "title": "Openintervals",
+          "type": "array"
+        },
+        "place": {
+          "$ref": "#/$defs/GroundedPlace"
+        },
+        "priority": {
+          "title": "Priority",
+          "type": "integer"
+        },
+        "visitDurationMinutes": {
+          "maximum": 240,
+          "minimum": 15,
+          "title": "Visitdurationminutes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "candidateIndex",
+        "name",
+        "category",
+        "priority",
+        "visitDurationMinutes",
+        "durationSource",
+        "place",
+        "hoursSource",
+        "openIntervals"
+      ],
+      "title": "GroundedStop",
+      "type": "object"
+    },
+    "Locality": {
+      "additionalProperties": false,
+      "description": "The resolved city/locality.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "timeZoneId": {
+          "title": "Timezoneid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "timeZoneId"
+      ],
+      "title": "Locality",
+      "type": "object"
+    },
+    "Location": {
+      "additionalProperties": false,
+      "description": "Geographic coordinates.",
+      "properties": {
+        "latitude": {
+          "title": "Latitude",
+          "type": "number"
+        },
+        "longitude": {
+          "title": "Longitude",
+          "type": "number"
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ],
+      "title": "Location",
+      "type": "object"
+    },
+    "MapsHandoff": {
+      "additionalProperties": false,
+      "description": "Google Maps handoff URLs.",
+      "properties": {
+        "browserSafeParts": {
+          "items": {
+            "$ref": "#/$defs/MapsHandoffPart"
+          },
+          "title": "Browsersafeparts",
+          "type": "array"
+        },
+        "errorCode": {
+          "anyOf": [
+            {
+              "const": "HANDOFF_UNAVAILABLE",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Errorcode"
+        },
+        "fullRouteUniversallySupported": {
+          "title": "Fullrouteuniversallysupported",
+          "type": "boolean"
+        },
+        "fullRouteUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fullrouteurl"
+        },
+        "warningCode": {
+          "anyOf": [
+            {
+              "enum": [
+                "MOBILE_WAYPOINT_LIMIT",
+                "FULL_URL_TOO_LONG"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Warningcode"
+        }
+      },
+      "required": [
+        "fullRouteUniversallySupported",
+        "browserSafeParts"
+      ],
+      "title": "MapsHandoff",
+      "type": "object"
+    },
+    "MapsHandoffPart": {
+      "additionalProperties": false,
+      "description": "One browser-safe segment of the Google Maps URL.",
+      "properties": {
+        "endStopIndex": {
+          "title": "Endstopindex",
+          "type": "integer"
+        },
+        "part": {
+          "title": "Part",
+          "type": "integer"
+        },
+        "startStopIndex": {
+          "title": "Startstopindex",
+          "type": "integer"
+        },
+        "totalParts": {
+          "title": "Totalparts",
+          "type": "integer"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "part",
+        "totalParts",
+        "startStopIndex",
+        "endStopIndex",
+        "url"
+      ],
+      "title": "MapsHandoffPart",
+      "type": "object"
+    },
+    "OpenInterval": {
+      "additionalProperties": false,
+      "description": "A time interval when a place is open.",
+      "properties": {
+        "end": {
+          "format": "date-time",
+          "title": "End",
+          "type": "string"
+        },
+        "localEnd": {
+          "title": "Localend",
+          "type": "string"
+        },
+        "localStart": {
+          "title": "Localstart",
+          "type": "string"
+        },
+        "start": {
+          "format": "date-time",
+          "title": "Start",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "localStart",
+        "localEnd"
+      ],
+      "title": "OpenInterval",
+      "type": "object"
+    },
+    "PhotoAttribution": {
+      "additionalProperties": false,
+      "description": "Attribution data for a place photo.",
+      "properties": {
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "photoUri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Photouri"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "uri"
+      ],
+      "title": "PhotoAttribution",
+      "type": "object"
+    },
+    "PlacePhoto": {
+      "additionalProperties": false,
+      "description": "A photo resource from Places API.",
+      "properties": {
+        "authorAttributions": {
+          "items": {
+            "$ref": "#/$defs/PhotoAttribution"
+          },
+          "title": "Authorattributions",
+          "type": "array"
+        },
+        "heightPx": {
+          "title": "Heightpx",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "widthPx": {
+          "title": "Widthpx",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "widthPx",
+        "heightPx",
+        "authorAttributions"
+      ],
+      "title": "PlacePhoto",
+      "type": "object"
+    },
+    "RouteComparison": {
+      "additionalProperties": false,
+      "description": "Available naive-vs-optimized comparison.",
+      "properties": {
+        "distanceDeltaMeters": {
+          "title": "Distancedeltameters",
+          "type": "integer"
+        },
+        "durationDeltaSeconds": {
+          "title": "Durationdeltaseconds",
+          "type": "integer"
+        },
+        "naive": {
+          "$ref": "#/$defs/RouteMetrics"
+        },
+        "naiveFeasible": {
+          "title": "Naivefeasible",
+          "type": "boolean"
+        },
+        "naiveInfeasibilityCodes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Naiveinfeasibilitycodes",
+          "type": "array"
+        },
+        "naivePolyline": {
+          "title": "Naivepolyline",
+          "type": "string"
+        },
+        "optimized": {
+          "$ref": "#/$defs/RouteMetrics"
+        },
+        "optimizedPolyline": {
+          "title": "Optimizedpolyline",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "improved",
+            "same_order",
+            "no_reordering_needed",
+            "metrics_diverged"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "status": {
+          "const": "available",
+          "default": "available",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "naive",
+        "optimized",
+        "naivePolyline",
+        "optimizedPolyline",
+        "distanceDeltaMeters",
+        "durationDeltaSeconds",
+        "naiveFeasible",
+        "outcome"
+      ],
+      "title": "RouteComparison",
+      "type": "object"
+    },
+    "RouteMetrics": {
+      "additionalProperties": false,
+      "description": "Distance and duration totals for a route order.",
+      "properties": {
+        "stopOrder": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Stoporder",
+          "type": "array"
+        },
+        "totalDistanceMeters": {
+          "title": "Totaldistancemeters",
+          "type": "integer"
+        },
+        "totalDurationSeconds": {
+          "title": "Totaldurationseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "totalDistanceMeters",
+        "totalDurationSeconds",
+        "stopOrder"
+      ],
+      "title": "RouteMetrics",
+      "type": "object"
+    },
+    "ShareProof": {
+      "additionalProperties": false,
+      "description": "Proof of itinerary authorship for sharing.",
+      "properties": {
+        "expiresAt": {
+          "format": "date-time",
+          "title": "Expiresat",
+          "type": "string"
+        },
+        "hmac": {
+          "title": "Hmac",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expiresAt",
+        "hmac"
+      ],
+      "title": "ShareProof",
+      "type": "object"
+    },
+    "StopCategory": {
+      "enum": [
+        "quick_viewpoint",
+        "landmark",
+        "museum_gallery",
+        "historic_religious_site",
+        "neighborhood_market_park",
+        "food_break",
+        "experience_tour",
+        "other"
+      ],
+      "title": "StopCategory",
+      "type": "string"
+    },
+    "TimeWindow": {
+      "additionalProperties": false,
+      "description": "The user's requested time window.",
+      "properties": {
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "end": {
+          "format": "date-time",
+          "title": "End",
+          "type": "string"
+        },
+        "localEnd": {
+          "title": "Localend",
+          "type": "string"
+        },
+        "localStart": {
+          "title": "Localstart",
+          "type": "string"
+        },
+        "start": {
+          "format": "date-time",
+          "title": "Start",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "localStart",
+        "localEnd",
+        "date"
+      ],
+      "title": "TimeWindow",
+      "type": "object"
+    },
+    "Totals": {
+      "additionalProperties": false,
+      "description": "Aggregate time totals for the itinerary.",
+      "properties": {
+        "elapsedSeconds": {
+          "title": "Elapsedseconds",
+          "type": "integer"
+        },
+        "travelSeconds": {
+          "title": "Travelseconds",
+          "type": "integer"
+        },
+        "visitSeconds": {
+          "title": "Visitseconds",
+          "type": "integer"
+        },
+        "waitSeconds": {
+          "title": "Waitseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "visitSeconds",
+        "travelSeconds",
+        "waitSeconds",
+        "elapsedSeconds"
+      ],
+      "title": "Totals",
+      "type": "object"
+    },
+    "TravelEntry": {
+      "additionalProperties": false,
+      "description": "A travel leg between two stops.",
+      "properties": {
+        "arrival": {
+          "format": "date-time",
+          "title": "Arrival",
+          "type": "string"
+        },
+        "departure": {
+          "format": "date-time",
+          "title": "Departure",
+          "type": "string"
+        },
+        "distanceMeters": {
+          "title": "Distancemeters",
+          "type": "integer"
+        },
+        "durationSeconds": {
+          "title": "Durationseconds",
+          "type": "integer"
+        },
+        "fromIndex": {
+          "title": "Fromindex",
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            "WALK",
+            "DRIVE"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "toIndex": {
+          "title": "Toindex",
+          "type": "integer"
+        },
+        "type": {
+          "const": "travel",
+          "default": "travel",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fromIndex",
+        "toIndex",
+        "mode",
+        "durationSeconds",
+        "distanceMeters",
+        "departure",
+        "arrival"
+      ],
+      "title": "TravelEntry",
+      "type": "object"
+    },
+    "VisitEntry": {
+      "additionalProperties": false,
+      "description": "Time spent at a stop.",
+      "properties": {
+        "arrival": {
+          "format": "date-time",
+          "title": "Arrival",
+          "type": "string"
+        },
+        "departure": {
+          "format": "date-time",
+          "title": "Departure",
+          "type": "string"
+        },
+        "durationMinutes": {
+          "title": "Durationminutes",
+          "type": "integer"
+        },
+        "intervalUsed": {
+          "$ref": "#/$defs/OpenInterval"
+        },
+        "stopIndex": {
+          "title": "Stopindex",
+          "type": "integer"
+        },
+        "type": {
+          "const": "visit",
+          "default": "visit",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stopIndex",
+        "arrival",
+        "departure",
+        "durationMinutes",
+        "intervalUsed"
+      ],
+      "title": "VisitEntry",
+      "type": "object"
+    },
+    "WaitEntry": {
+      "additionalProperties": false,
+      "description": "A wait period before a stop opens.",
+      "properties": {
+        "durationSeconds": {
+          "title": "Durationseconds",
+          "type": "integer"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "stopIndex": {
+          "title": "Stopindex",
+          "type": "integer"
+        },
+        "type": {
+          "const": "wait",
+          "default": "wait",
+          "title": "Type",
+          "type": "string"
+        },
+        "waitEnd": {
+          "format": "date-time",
+          "title": "Waitend",
+          "type": "string"
+        },
+        "waitStart": {
+          "format": "date-time",
+          "title": "Waitstart",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stopIndex",
+        "durationSeconds",
+        "waitStart",
+        "waitEnd",
+        "reason"
+      ],
+      "title": "WaitEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The complete itinerary response.",
+  "properties": {
+    "comparison": {
+      "discriminator": {
+        "mapping": {
+          "available": "#/$defs/RouteComparison",
+          "unavailable": "#/$defs/ComparisonUnavailable"
+        },
+        "propertyName": "status"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RouteComparison"
+        },
+        {
+          "$ref": "#/$defs/ComparisonUnavailable"
+        }
+      ],
+      "title": "Comparison"
+    },
+    "diagnostics": {
+      "items": {
+        "$ref": "#/$defs/Diagnostic"
+      },
+      "title": "Diagnostics",
+      "type": "array"
+    },
+    "droppedStops": {
+      "items": {
+        "$ref": "#/$defs/DroppedStop"
+      },
+      "title": "Droppedstops",
+      "type": "array"
+    },
+    "locality": {
+      "$ref": "#/$defs/Locality"
+    },
+    "mapsHandoff": {
+      "$ref": "#/$defs/MapsHandoff"
+    },
+    "origin": {
+      "$ref": "#/$defs/GroundedPlace"
+    },
+    "requestId": {
+      "title": "Requestid",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1,
+      "default": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "shareProof": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShareProof"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "stops": {
+      "items": {
+        "$ref": "#/$defs/GroundedStop"
+      },
+      "title": "Stops",
+      "type": "array"
+    },
+    "timeline": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "travel": "#/$defs/TravelEntry",
+            "visit": "#/$defs/VisitEntry",
+            "wait": "#/$defs/WaitEntry"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/TravelEntry"
+          },
+          {
+            "$ref": "#/$defs/WaitEntry"
+          },
+          {
+            "$ref": "#/$defs/VisitEntry"
+          }
+        ]
+      },
+      "title": "Timeline",
+      "type": "array"
+    },
+    "totals": {
+      "$ref": "#/$defs/Totals"
+    },
+    "travelMode": {
+      "enum": [
+        "WALK",
+        "DRIVE"
+      ],
+      "title": "Travelmode",
+      "type": "string"
+    },
+    "window": {
+      "$ref": "#/$defs/TimeWindow"
+    }
+  },
+  "required": [
+    "requestId",
+    "status",
+    "locality",
+    "travelMode",
+    "window",
+    "origin",
+    "stops",
+    "timeline",
+    "droppedStops",
+    "comparison",
+    "mapsHandoff",
+    "totals",
+    "diagnostics"
+  ],
+  "title": "ItineraryResponse",
+  "type": "object"
+}

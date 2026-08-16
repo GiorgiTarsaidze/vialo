@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from vialo.models.itinerary import ItineraryResponse
 
@@ -55,3 +56,15 @@ class TestJsonSchema:
         props = schema.get("properties", {})
         version_schema = props.get("schemaVersion", {})
         assert version_schema.get("const") == 1 or version_schema.get("default") == 1
+
+    def test_committed_frontend_schema_matches_pydantic(self) -> None:
+        """The frontend contract artifact must be regenerated whenever Pydantic changes."""
+        schema_path = (
+            Path(__file__).resolve().parents[3]
+            / "frontend"
+            / "src"
+            / "lib"
+            / "itinerary-response.schema.json"
+        )
+        committed = json.loads(schema_path.read_text())
+        assert committed == ItineraryResponse.model_json_schema(by_alias=True)

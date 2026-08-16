@@ -50,6 +50,10 @@ Parameters:
     Type: String
     Description: ACM certificate ARN for api.vialo.place (us-east-1 regional)
     Default: ""
+  FrontendCertificateArn:
+    Type: String
+    Description: ACM certificate ARN for vialo.place (us-east-1 for CloudFront)
+    NoEcho: false
 
 Conditions:
   HasApiCertificate: !Not [!Equals [!Ref ApiCertificateArn, ""]]
@@ -363,6 +367,194 @@ Resources:
         - Key: ManagedBy
           Value: sam
 
+  # --- Frontend Hosting ---
+
+  # S3 bucket — private, encrypted, no website hosting, no public ACL
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "vialo-frontend-${AWS::AccountId}-${AWS::Region}-dev"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+  # OAC for CloudFront → S3 access
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: vialo-frontend-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Bucket policy — only the CloudFront distribution can read objects
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+
+  # CloudFront Function — SPA rewrite for extensionless non-API paths
+  SpaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: vialo-spa-rewrite
+      AutoPublish: true
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          // Do not rewrite /api/* paths
+          if (uri.startsWith('/api/')) {
+            return request;
+          }
+          // Do not rewrite files with extensions (real assets)
+          if (uri.lastIndexOf('.') > uri.lastIndexOf('/')) {
+            return request;
+          }
+          // SPA fallback: rewrite extensionless paths to /index.html
+          request.uri = '/index.html';
+          return request;
+        }
+      FunctionConfig:
+        Comment: "Vialo SPA rewrite — extensionless non-API paths to /index.html"
+        Runtime: cloudfront-js-2.0
+
+  # Response headers policy — strict CSP compatible with Google Maps JS + self-hosted fonts
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: vialo-security-headers
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Preload: true
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          XSSProtection:
+            ModeBlock: true
+            Protection: true
+            Override: true
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' https://*.googleapis.com https://*.gstatic.com https://*.ggpht.com https://maps.google.com data: blob:; connect-src 'self' https://maps.googleapis.com https://maps.gstatic.com; frame-src https://www.google.com https://maps.google.com; worker-src blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            Override: true
+
+  # CloudFront Distribution — vialo.place
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: "Vialo frontend — vialo.place"
+        Aliases:
+          - vialo.place
+        ViewerCertificate:
+          AcmCertificateArn: !Ref FrontendCertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        # Default origin — S3 via OAC
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+          - Id: ApiOrigin
+            DomainName: api.vialo.place
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewriteFunction.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: false
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
 Outputs:
   ApiUrl:
     Description: API Gateway execute-api URL
@@ -378,3 +570,15 @@ Outputs:
     Condition: HasApiCertificate
     Description: DNS target for CNAME/ALIAS record to api.vialo.place
     Value: !GetAtt ApiDomainName.RegionalDomainName
+  FrontendBucketName:
+    Description: S3 bucket for frontend assets
+    Value: !Ref FrontendBucket
+  FrontendDistributionId:
+    Description: CloudFront distribution ID for frontend
+    Value: !Ref FrontendDistribution
+  FrontendDistributionDomain:
+    Description: CloudFront distribution domain name
+    Value: !GetAtt FrontendDistribution.DomainName
+  FrontendUrl:
+    Description: Production frontend URL
+    Value: "https://vialo.place"

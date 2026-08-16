@@ -1,4 +1,4 @@
-.PHONY: layer clean-layer test lint typecheck validate build check
+.PHONY: layer clean-layer test lint typecheck validate build check deploy-frontend
 
 SAM := uvx --from aws-sam-cli==1.165.0 sam
 
@@ -36,3 +36,7 @@ build: layer
 
 # Run all checks
 check: lint typecheck test validate
+
+# Deploy frontend to S3 + CloudFront (requires env vars)
+deploy-frontend:
+	./scripts/deploy-frontend.sh

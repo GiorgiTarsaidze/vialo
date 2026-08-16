@@ -204,3 +204,34 @@ A bounded public Tbilisi request also exercised the complete production path. Th
 - The response included a full Google Maps round-trip URL and one browser-safe part, with no raw prompt field.
 
 The successful call settled 453 Bedrock input tokens, 449 output tokens, and 10,793 conservative micro-USD. Monthly tracked reservation remained 212,896 of the 5,000,000 micro-USD cap. API access logs contained only the configured request ID, route, status, response length, and integration latency; an exact prompt and configured-secret scan of recent logs passed.
+
+## 2026-08-16 — Phase 3 frontend and secure CloudFront deployment
+
+### React experience and contract safety
+
+- Built the mobile-first React 18 + TypeScript + Vite SPA from the locked frontend blueprint: input hero, factual pipeline loading, typed errors, result statement, honest naive-versus-optimized comparison, one Maps JavaScript overlay, complete travel/wait/visit timeline, dropped-stop diagnostics, Maps handoff, privacy/terms routes, explicit anonymous sharing, read-only permalinks, and creator-only deletion.
+- Preserved place-local wall times from the API instead of converting through the viewer timezone. Timeline entries use the backend's one-based matrix stop index, while comparison route order continues to use candidate indices.
+- Added a generated Pydantic JSON Schema artifact and exact backend drift test. Frontend runtime guards reject malformed responses; production has no fixture or hard-coded itinerary fallback.
+- Pinned the frontend dependency graph, self-hosted Inter and Newsreader, disabled public source maps, and reduced `npm audit` to zero known vulnerabilities.
+
+### Hosting and deployment
+
+CloudFormation updated `vialo-backend-dev` to `UPDATE_COMPLETE` and added:
+
+- private AES-256 encrypted S3 bucket `vialo-frontend-381492291672-us-east-1-dev` with all public-access blocks, bucket-owner enforcement, retention policies, and no website endpoint;
+- CloudFront distribution `E1M7B5Z8A2A3Z8` at `d1topuming9zvf.cloudfront.net`, using Origin Access Control and a bucket policy scoped to that distribution;
+- ACM-backed `vialo.place` alias, HTTPS redirects, HTTP/2+3, CSP/HSTS/nosniff/frame/referrer headers, extensionless SPA rewriting, and uncached same-origin `/api/*` proxying that does not mask API or asset failures.
+
+The deployment script supplies the browser Maps key only at build time, gives hashed assets immutable caching, keeps `index.html` uncached, and invalidates the two entry points. Live smokes confirmed SPA routes, typed API 404 preservation, private-origin asset failure preservation, security headers on frontend and API responses, direct S3 403, and continued `api.vialo.place` operation.
+
+### Live browser and sharing evidence
+
+Playwright reviewed the deployed application at 360, 390, and 1440 pixels. There was no horizontal overflow. Keyboard-visible skip navigation, 44-pixel targets, complete semantic timeline labels, and emulated reduced motion all passed. One exact-date Tbilisi request returned a real computed partial itinerary with two retained grounded stops, travel and wait rows, a dropped-stop reason, paired route metrics/geometry, and a Maps handoff.
+
+Live share creation initially returned 400 because the strict Pydantic boundary validated decoded JSON in Python mode, rejecting canonical ISO date/datetime and enum strings. The share API now uses `CreateShareRequest.model_validate_json`; a regression round-trips a JSON-serialized itinerary through the route. After redeployment, share create/read/delete returned 201/200/204, the creator capability remained only in local storage, deletion transitioned to the generic unavailable screen, and a fresh GET returned 404.
+
+The final release gate passes 291 backend tests and 54 frontend tests, Ruff, ESLint, strict mypy and TypeScript, source and transformed SAM validation, ARM64 layer verification, production frontend build, repository safety checks, and zero npm vulnerabilities. An independent final UI/infrastructure audit returned PASS with no blockers.
+
+### Remaining production-host action
+
+The Cloudflare root record is not yet configured. Add a DNS-only root CNAME/flattened record from `vialo.place` to `d1topuming9zvf.cloudfront.net`. The browser key is intentionally restricted to `https://vialo.place/*`, so the temporary CloudFront hostname receives Google's expected `RefererNotAllowedMapError`; after DNS propagation, re-verify root TLS, same-origin API routing, and the visible Maps overlay before claiming the root hostname live.

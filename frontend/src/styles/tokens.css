@@ -1,0 +1,79 @@
+/**
+ * Vialo Design Tokens
+ * Self-hosted Inter + Newsreader via @fontsource packages.
+ */
+
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/newsreader/latin-500.css';
+
+:root {
+  /* Color tokens */
+  --color-canvas: #fff8ea;
+  --color-surface: #fffcf5;
+  --color-surface-strong: #ffffff;
+  --color-ink: #2b2326;
+  --color-ink-muted: #6d6064;
+  --color-border: #e7d8d1;
+  --color-border-strong: #bfaaa4;
+
+  --color-primary: #6f3e59;
+  --color-primary-hover: #593047;
+  --color-primary-soft: #f2e2ea;
+
+  --color-accent-sun: #d89b2b;
+  --color-accent-sun-soft: #fff0c2;
+  --color-accent-blush: #f8e3e7;
+  --color-accent-lilac: #eee6f2;
+
+  --color-naive: #a95242;
+  --color-naive-soft: #f7e2da;
+  --color-optimized: #6f3e59;
+  --color-optimized-soft: #f2e2ea;
+
+  --color-warning: #8a5b00;
+  --color-warning-soft: #fff0c2;
+  --color-danger: #9a3f50;
+  --color-danger-soft: #f8dde4;
+  --color-success: #456a50;
+  --color-focus: #6a4fa3;
+
+  --color-map-land: #f4ebdd;
+  --color-map-water: #e7e1f2;
+  --color-map-road: #ffffff;
+
+  /* Typography */
+  --font-display: 'Newsreader', Georgia, serif;
+  --font-ui: 'Inter', system-ui, sans-serif;
+
+  /* Spacing (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+
+  /* Shape */
+  --radius-input: 14px;
+  --radius-card: 18px;
+  --radius-pill: 9999px;
+
+  /* Elevation */
+  --shadow-floating: 0 12px 32px rgb(43 35 38 / 0.12);
+
+  /* Motion */
+  --duration-fast: 150ms;
+  --duration-section: 300ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-section: 0ms;
+  }
+}

@@ -12,6 +12,7 @@ def test_resources_are_vialo_named_and_environment_tagged() -> None:
         "vialo-place-cache-dev",
         "vialo-shared-itineraries-dev",
         "vialo-request-limits-dev",
+        "vialo-frontend-${AWS::AccountId}-${AWS::Region}-dev",
     ):
         assert name in TEMPLATE
     assert TEMPLATE.count("Project: vialo") >= 2
@@ -76,3 +77,101 @@ def test_bedrock_iam_uses_exact_foundation_model_arns() -> None:
     assert 'Resource: "*"' not in TEMPLATE
     # No version-suffixed ARNs
     assert "v1:0" not in TEMPLATE
+
+
+# --- Frontend hosting infrastructure tests ---
+
+
+def test_frontend_s3_bucket_is_private_and_encrypted() -> None:
+    """S3 bucket must be private, encrypted, no website hosting, BucketOwnerEnforced."""
+    assert "BucketOwnerEnforced" in TEMPLATE
+    assert "SSEAlgorithm: AES256" in TEMPLATE
+    assert "BlockPublicAcls: true" in TEMPLATE
+    assert "BlockPublicPolicy: true" in TEMPLATE
+    assert "IgnorePublicAcls: true" in TEMPLATE
+    assert "RestrictPublicBuckets: true" in TEMPLATE
+    # No website hosting configuration
+    assert "WebsiteConfiguration" not in TEMPLATE
+    assert "IndexDocument" not in TEMPLATE
+
+
+def test_cloudfront_oac_configured() -> None:
+    """CloudFront OAC must be used for S3 origin access."""
+    assert "AWS::CloudFront::OriginAccessControl" in TEMPLATE
+    assert "SigningBehavior: always" in TEMPLATE
+    assert "SigningProtocol: sigv4" in TEMPLATE
+    assert "OriginAccessControlId" in TEMPLATE
+
+
+def test_bucket_policy_scoped_to_distribution_source_arn() -> None:
+    """Bucket policy must use exact SourceArn condition for CloudFront."""
+    assert "AWS:SourceArn" in TEMPLATE
+    assert "cloudfront.amazonaws.com" in TEMPLATE
+    assert "s3:GetObject" in TEMPLATE
+    assert "FrontendDistribution" in TEMPLATE
+
+
+def test_cloudfront_distribution_security_configuration() -> None:
+    """Distribution must use TLSv1.2_2021, HTTP/2+3, PriceClass_100, IPv6, compression."""
+    assert "TLSv1.2_2021" in TEMPLATE
+    assert "http2and3" in TEMPLATE
+    assert "PriceClass_100" in TEMPLATE
+    assert "IPV6Enabled: true" in TEMPLATE
+    assert "Compress: true" in TEMPLATE
+    assert "sni-only" in TEMPLATE
+
+
+def test_cloudfront_distribution_has_vialo_place_alias() -> None:
+    """Distribution must alias vialo.place with FrontendCertificateArn."""
+    assert "vialo.place" in TEMPLATE
+    assert "FrontendCertificateArn" in TEMPLATE
+    assert "AcmCertificateArn: !Ref FrontendCertificateArn" in TEMPLATE
+
+
+def test_api_origin_routes_to_api_vialo_place_no_host_forward() -> None:
+    """API origin must proxy to api.vialo.place with caching disabled, all methods."""
+    assert "api.vialo.place" in TEMPLATE
+    assert "https-only" in TEMPLATE
+    assert "/api/*" in TEMPLATE
+    # CachingDisabled managed policy ID
+    assert "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" in TEMPLATE
+    # AllViewerExceptHostHeader managed policy ID — no Host forwarding
+    assert "b689b0a8-53d0-40ab-baf2-68738e2966ac" in TEMPLATE
+    # All HTTP methods for API
+    assert "DELETE" in TEMPLATE
+    assert "PATCH" in TEMPLATE
+
+
+def test_spa_rewrite_cloudfront_function_exists() -> None:
+    """CloudFront Function must rewrite extensionless non-API paths to /index.html."""
+    assert "AWS::CloudFront::Function" in TEMPLATE
+    assert "vialo-spa-rewrite" in TEMPLATE
+    assert "cloudfront-js-2.0" in TEMPLATE
+    assert "/index.html" in TEMPLATE
+    assert "startsWith('/api/')" in TEMPLATE
+
+
+def test_security_response_headers_policy_exists() -> None:
+    """Response headers must include HSTS, CSP, X-Frame-Options, etc."""
+    assert "AWS::CloudFront::ResponseHeadersPolicy" in TEMPLATE
+    assert "StrictTransportSecurity" in TEMPLATE
+    assert "ContentSecurityPolicy" in TEMPLATE
+    assert "ContentTypeOptions" in TEMPLATE
+    assert "FrameOptions" in TEMPLATE
+    assert "DENY" in TEMPLATE
+    assert "maps.googleapis.com" in TEMPLATE
+
+
+def test_frontend_outputs_exist() -> None:
+    """Template must export bucket name, distribution ID, and domain."""
+    assert "FrontendBucketName:" in TEMPLATE
+    assert "FrontendDistributionId:" in TEMPLATE
+    assert "FrontendDistributionDomain:" in TEMPLATE
+    assert "FrontendUrl:" in TEMPLATE
+
+
+def test_no_public_acl_or_website_hosting() -> None:
+    """Ensure no public ACL grants or static website hosting config."""
+    assert "PublicRead" not in TEMPLATE
+    assert "public-read" not in TEMPLATE
+    assert "WebsiteConfiguration" not in TEMPLATE
