@@ -190,3 +190,17 @@ That successful invocation settled one Bedrock call with 432 input tokens, 860 o
 The post-migration release gate passed with 279 tests and 86% statement coverage, Ruff lint/format checks, strict mypy, source and transformed SAM validation, a successful SAM build, ARM64 layer verification, and repository safety validation. The dependency layer contains one CPython 3.12 AArch64 native extension, 31,638,313 uncompressed bytes, and 18,099,160 zipped bytes.
 
 One release run exposed a flaky Moto-only concurrency result because Moto's in-memory backend can lose concurrent writes even though DynamoDB conditionally updates a single item atomically. The test now preserves genuinely concurrent callers while serializing only the emulated storage operation to model DynamoDB per-item linearizability and still evaluates the production condition. It passed 20 consecutive stress runs plus the full suite; persisted and caller-acknowledged reservations remained under the cap.
+
+## 2026-08-16 — Custom API hostname and Tbilisi production smoke
+
+Cloudflare now publishes the DNS-only `api.vialo.place` CNAME to the exact REGIONAL API Gateway target. Live verification confirmed DNS resolution, the ACM `vialo.place`/`*.vialo.place` certificate, hostname matching, TLS 1.3 negotiation under the AWS TLS 1.2 minimum policy, one `$default` API mapping, and an expected typed share `404` through the custom hostname.
+
+A bounded public Tbilisi request also exercised the complete production path. The literal origin `Liberty Square` was correctly rejected as ambiguous because Places returned two equally ranked results; Google's canonical `Freedom Square` query resolved uniquely. Retrying with that canonical origin returned HTTP 200, schema version 1, and an explicitly partial walking round trip for 13:00–17:00 in `Asia/Tbilisi`:
+
+- Metekhi Church and Anchiskhati Basilica were retained with current opening intervals and 30-minute bounded model-estimate visits.
+- Three real walking legs totaled 3,136 meters and 2,705 seconds, returning to Freedom Square at 14:45:05.
+- The naive and optimized orders were identical, with paired real 477-character polylines; no optimization saving was claimed.
+- Narikala Fortress was excluded because usable opening hours were unavailable, and Old Town Abanotubani was excluded because Places could not resolve the generated district label unambiguously. Both reasons remained visible rather than being silently ignored.
+- The response included a full Google Maps round-trip URL and one browser-safe part, with no raw prompt field.
+
+The successful call settled 453 Bedrock input tokens, 449 output tokens, and 10,793 conservative micro-USD. Monthly tracked reservation remained 212,896 of the 5,000,000 micro-USD cap. API access logs contained only the configured request ID, route, status, response length, and integration latency; an exact prompt and configured-secret scan of recent logs passed.
