@@ -19,8 +19,18 @@ def solve_route(
     window_end: dt.datetime,
     return_to_origin: bool,
     travel_mode: TravelMode,
+    destination_index: int | None = None,
 ) -> tuple[FeasibleSchedule, list[DroppedStop]] | None:
     """Solve the route, dropping stops if necessary.
+
+    Args:
+        stops: Grounded stops to schedule.
+        matrix: Directed travel-time matrix.
+        window_start: UTC-aware start time.
+        window_end: UTC-aware end time.
+        return_to_origin: Whether to return to origin (legacy).
+        travel_mode: WALK or DRIVE.
+        destination_index: If set, mandatory final travel leg to this matrix index.
 
     Returns the feasible schedule and any dropped stops, or None if completely infeasible.
     """
@@ -33,6 +43,7 @@ def solve_route(
         window_end=window_end,
         return_to_origin=return_to_origin,
         travel_mode=travel_mode,
+        destination_index=destination_index,
     )
 
     if schedule is not None:
@@ -47,4 +58,5 @@ def solve_route(
         window_end=window_end,
         return_to_origin=return_to_origin,
         travel_mode=travel_mode,
+        destination_index=destination_index,
     )

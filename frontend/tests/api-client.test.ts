@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { planItinerary, createShare, getShare, deleteShare, ApiClientError } from '../src/lib/api-client';
-import { isItineraryResponse, isCreateShareResponse, isApiError } from '../src/lib/guards';
+import { planItinerary, createShare, getShare, deleteShare, fetchAutocomplete, ApiClientError } from '../src/lib/api-client';
+import { isItineraryResponse, isCreateShareResponse, isApiError, isAutocompleteResponse } from '../src/lib/guards';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -14,7 +14,8 @@ function makeMinimalItinerary() {
     locality: { name: 'Venice', timeZoneId: 'Europe/Rome' },
     travelMode: 'WALK' as const,
     window: { start: '2024-01-01T09:00:00Z', end: '2024-01-01T17:00:00Z', localStart: '09:00', localEnd: '17:00', date: '2024-01-01' },
-    origin: { placeId: 'place1', displayName: 'Hotel', formattedAddress: 'Via X', location: { latitude: 45.4, longitude: 12.3 }, primaryType: null, timeZoneId: 'Europe/Rome', photos: [] },
+    origin: { placeId: 'place1', displayName: 'Hotel', formattedAddress: 'Via X', location: { latitude: 45.4, longitude: 12.3 }, primaryType: null, timeZoneId: 'Europe/Rome', photos: [], rating: null, userRatingCount: null, photoUrl: null },
+    destination: null,
     stops: [],
     timeline: [],
     droppedStops: [],
@@ -41,6 +42,16 @@ describe('guards', () => {
     expect(isItineraryResponse(makeMinimalItinerary())).toBe(true);
   });
 
+  it('isItineraryResponse accepts null destination', () => {
+    const resp = makeMinimalItinerary();
+    expect(isItineraryResponse(resp)).toBe(true);
+  });
+
+  it('isItineraryResponse accepts object destination', () => {
+    const resp = { ...makeMinimalItinerary(), destination: { placeId: 'x', displayName: 'End', formattedAddress: 'Addr', location: { latitude: 1, longitude: 1 }, primaryType: null, timeZoneId: 'Z', photos: [], rating: null, userRatingCount: null, photoUrl: null } };
+    expect(isItineraryResponse(resp)).toBe(true);
+  });
+
   it('isItineraryResponse rejects missing fields', () => {
     expect(isItineraryResponse({})).toBe(false);
     expect(isItineraryResponse({ schemaVersion: 2 })).toBe(false);
@@ -50,13 +61,21 @@ describe('guards', () => {
     expect(isCreateShareResponse({ shareId: 'abc', shareUrl: 'https://x.com/r/abc', deletionToken: 'tok' })).toBe(true);
     expect(isCreateShareResponse({ shareId: 'abc' })).toBe(false);
   });
+
+  it('isAutocompleteResponse validates predictions', () => {
+    expect(isAutocompleteResponse({ predictions: [{ placeId: 'p1', displayName: 'Place', formattedAddress: 'Addr' }] })).toBe(true);
+    expect(isAutocompleteResponse({ predictions: [{ placeId: 'p1', displayName: 'Place', formattedAddress: 'Addr', location: { latitude: 45.4, longitude: 12.3 } }] })).toBe(true);
+    expect(isAutocompleteResponse({ predictions: [{ placeId: 'p1', displayName: 'Place', formattedAddress: 'Addr', location: { latitude: 'bad' } }] })).toBe(false);
+    expect(isAutocompleteResponse({ predictions: 'not_array' })).toBe(false);
+    expect(isAutocompleteResponse(null)).toBe(false);
+  });
 });
 
 describe('planItinerary', () => {
   beforeEach(() => mockFetch.mockReset());
   afterEach(() => vi.restoreAllMocks());
 
-  it('sends POST with prompt and returns parsed response', async () => {
+  it('sends POST with prompt string and returns parsed response', async () => {
     const itinerary = makeMinimalItinerary();
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -69,6 +88,30 @@ describe('planItinerary', () => {
       body: JSON.stringify({ prompt: 'Venice, 09:00–17:00' }),
     }));
     expect(result.requestId).toBe('req-123');
+  });
+
+  it('sends structured payload with origin and destination, stripping location', async () => {
+    const itinerary = makeMinimalItinerary();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(itinerary),
+    });
+
+    const payload = {
+      prompt: '09:00–17:00, museums',
+      origin: { placeId: 'origin-id', displayName: 'Hotel', formattedAddress: 'Addr 1', location: { latitude: 45.4, longitude: 12.3 } },
+      destination: { placeId: 'dest-id', displayName: 'Station', formattedAddress: 'Addr 2', location: { latitude: 45.5, longitude: 12.4 } },
+    };
+    await planItinerary(payload);
+    // Location must NOT be sent to backend
+    expect(mockFetch).toHaveBeenCalledWith('/api/itineraries', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: '09:00–17:00, museums',
+        origin: { placeId: 'origin-id', displayName: 'Hotel', formattedAddress: 'Addr 1' },
+        destination: { placeId: 'dest-id', displayName: 'Station', formattedAddress: 'Addr 2' },
+      }),
+    }));
   });
 
   it('throws ApiClientError on 429 with retry timing', async () => {
@@ -96,6 +139,46 @@ describe('planItinerary', () => {
     });
 
     await expect(planItinerary('test')).rejects.toThrow('unexpected response format');
+  });
+});
+
+describe('fetchAutocomplete', () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it('sends POST to /api/places/autocomplete with {query}', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ predictions: [{ placeId: 'p1', displayName: 'Place 1', formattedAddress: 'Addr' }] }),
+    });
+
+    const result = await fetchAutocomplete('venice hotel');
+    expect(mockFetch).toHaveBeenCalledWith('/api/places/autocomplete', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ query: 'venice hotel' }),
+    }));
+    expect(result.predictions).toHaveLength(1);
+    expect(result.predictions[0]!.placeId).toBe('p1');
+  });
+
+  it('accepts predictions with optional location', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ predictions: [{ placeId: 'p1', displayName: 'Place 1', formattedAddress: 'Addr', location: { latitude: 45.4, longitude: 12.3 } }] }),
+    });
+
+    const result = await fetchAutocomplete('venice');
+    expect(result.predictions[0]!.location).toEqual({ latitude: 45.4, longitude: 12.3 });
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ error: { code: 'INTERNAL_ERROR', message: 'fail' } }),
+    });
+
+    await expect(fetchAutocomplete('test')).rejects.toThrow();
   });
 });
 

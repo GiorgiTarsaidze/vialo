@@ -28,8 +28,9 @@ const result: ItineraryResponse = {
   origin: {
     placeId: 'origin', displayName: 'Origin', formattedAddress: 'Origin address',
     location: { latitude: 45.4, longitude: 12.3 }, primaryType: null,
-    timeZoneId: 'Europe/Rome', photos: [],
+    timeZoneId: 'Europe/Rome', photos: [], rating: null, userRatingCount: null, photoUrl: null,
   },
+  destination: null,
   stops: [], timeline: [], droppedStops: [],
   comparison: { status: 'unavailable', reasonCode: 'NO_DATA' },
   mapsHandoff: {

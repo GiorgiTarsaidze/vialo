@@ -42,7 +42,7 @@ npm test
 VITE_GOOGLE_MAPS_BROWSER_KEY=replace-with-referrer-restricted-key npm run build
 ```
 
-The release gate currently passes 291 backend tests and 54 frontend tests, strict mypy and TypeScript checks, Ruff and ESLint, source and transformed SAM validation, an ARM64 layer check, a production Vite build, and `npm audit` with zero known vulnerabilities. Ordinary tests mock provider and AWS boundaries and make no live provider calls.
+The release gate currently passes 396 backend tests and 93 frontend tests, strict mypy and TypeScript checks, Ruff and ESLint, source and transformed SAM validation, an ARM64 layer check, a production Vite build, and `npm audit` with zero known vulnerabilities. Ordinary tests mock provider and AWS boundaries and make no live provider calls.
 
 ## Configuration
 
@@ -58,7 +58,7 @@ The API endpoints are `https://ap9i8up7k7.execute-api.us-east-1.amazonaws.com` a
 
 The frontend distribution is deployed at `https://d1topuming9zvf.cloudfront.net`. Live smoke and Playwright review confirmed the 360/390/1440 layouts, loading and typed error states, a real computed itinerary, timeline and comparison data, Maps handoff, same-origin API routing, anonymous share create/read/delete, keyboard navigation, reduced motion, security headers, and private S3 enforcement. The referrer-restricted Maps key intentionally rejects this temporary CloudFront hostname.
 
-The remaining production-host action is a Cloudflare **DNS-only** root CNAME/flattened record from `vialo.place` to `d1topuming9zvf.cloudfront.net`. After propagation, verify `https://vialo.place`, its `/api/*` proxy, TLS, and the Maps overlay on the authorized production referrer before calling the root hostname live.
+The production site is live at `https://vialo.place`, with `/api/*` proxied same-origin through CloudFront and `https://api.vialo.place` available as the direct API hostname. Live Playwright verification confirmed the branded responsive experience, progressive pipeline state, Maps presentation, typed errors, and a real itinerary from the exact reported Tbilisi prompt. That run resolved the intended Tbilisi Sports Palace at May Square, rolled the date-less elapsed 09:00 window to the next local day, scheduled verified stops with ratings and attributed photos, and displayed real naive-versus-optimized route evidence.
 
 ## Fonts
 

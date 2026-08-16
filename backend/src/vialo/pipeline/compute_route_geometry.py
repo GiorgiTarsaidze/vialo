@@ -29,28 +29,39 @@ def compute_route_geometry(
     travel_mode: TravelMode,
     client: RoutesClient,
     return_to_origin: bool,
+    destination: GroundedPlace | None = None,
 ) -> RouteGeometry | None:
     """Compute route geometry for a given stop order.
+
+    When destination is provided, it becomes the route endpoint (all stops are intermediates).
+    Same origin/stops/destination parity is preserved for comparison fairness.
 
     Returns None if the geometry call fails.
     """
     if not ordered_stops:
         return None
 
-    intermediates = [s.place.location for s in ordered_stops[:-1]] if len(ordered_stops) > 1 else []
-
-    if return_to_origin:
-        destination = origin.location
-        if ordered_stops:
-            intermediates = [s.place.location for s in ordered_stops]
+    # Determine intermediates and final destination
+    if destination is not None:
+        # Fixed destination: all stops are intermediates
+        intermediates = [s.place.location for s in ordered_stops]
+        dest_location = destination.location
+    elif return_to_origin:
+        # Return to origin: all stops are intermediates, destination = origin
+        intermediates = [s.place.location for s in ordered_stops]
+        dest_location = origin.location
     else:
-        destination = ordered_stops[-1].place.location
+        # Open-ended: last stop is destination, rest are intermediates
+        intermediates = (
+            [s.place.location for s in ordered_stops[:-1]] if len(ordered_stops) > 1 else []
+        )
+        dest_location = ordered_stops[-1].place.location
 
     try:
         response = client.compute_routes(
             origin=origin.location,
             intermediates=intermediates,
-            destination=destination,
+            destination=dest_location,
             travel_mode=travel_mode,
             optimize_waypoint_order=False,
         )

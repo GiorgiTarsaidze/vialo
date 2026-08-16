@@ -49,6 +49,7 @@ def solve_with_dropping(
     window_end: dt.datetime,
     return_to_origin: bool,
     travel_mode: TravelMode = "WALK",
+    destination_index: int | None = None,
 ) -> tuple[FeasibleSchedule, list[DroppedStop]] | None:
     """Progressively drop stops until a feasible schedule is found.
 
@@ -62,12 +63,17 @@ def solve_with_dropping(
     while remaining_stops:
         # Build a sub-matrix for current stops
         # Matrix indices: 0=origin, 1..N = stops in remaining order
-        n = len(remaining_stops) + 1
-        sub_matrix: list[list[MatrixEdge]] = []
-        # Map: sub_matrix index -> original matrix index
-        # sub 0 -> original origin_index
-        # sub i+1 -> original remaining_indices[i] + 1 (since original matrix has origin at 0)
+        # If destination_index is set, include it as the last index
         orig_indices = [origin_index] + [idx + 1 for idx in remaining_indices]
+
+        # If destination exists, include it in sub-matrix
+        sub_dest_index: int | None = None
+        if destination_index is not None:
+            orig_indices.append(destination_index)
+            sub_dest_index = len(orig_indices) - 1
+
+        n = len(orig_indices)
+        sub_matrix: list[list[MatrixEdge]] = []
 
         for i in range(n):
             row: list[MatrixEdge] = []
@@ -92,6 +98,7 @@ def solve_with_dropping(
             window_end=window_end,
             return_to_origin=return_to_origin,
             travel_mode=travel_mode,
+            destination_index=sub_dest_index,
         )
 
         if schedule is not None:

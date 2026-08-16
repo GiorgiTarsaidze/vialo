@@ -1,5 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { PlanningError } from '../hooks/use-planning';
+import type { PlanningPayload } from '../lib/types';
+import { useAutocomplete } from '../hooks/use-autocomplete';
+import PlaceAutocomplete from './PlaceAutocomplete';
+import SelectionMap from './SelectionMap';
 import LoadingPipeline from './LoadingPipeline';
 
 const MAX_CHARS = 500;
@@ -7,17 +11,19 @@ const MAX_CHARS = 500;
 const EXAMPLES = [
   {
     label: 'Venice morning',
-    text: 'Venice, 09:00–14:00, architecture and quiet streets, on foot',
+    text: 'Tomorrow, start at Piazzale Roma in Venice at 09:00. Plan a walking day until 14:00 with architecture, churches, and quiet streets.',
   },
   {
-    label: 'Napoli essentials',
-    text: 'Naples, 10:00–18:00, the highlights plus great pizza for lunch, walking',
+    label: 'Naples highlights',
+    text: 'Tomorrow, start at Piazza del Plebiscito in Naples at 10:00. Plan a walking day until 18:00 with the main highlights and great pizza for lunch.',
   },
   {
     label: 'Lisbon viewpoints',
-    text: 'Lisbon, 08:30–16:00, miradouros and tiles, walking',
+    text: 'Tomorrow, start at Praça do Comércio in Lisbon at 08:30. Plan a walking day until 16:00 with miradouros and tile work.',
   },
 ];
+
+export type InputMode = 'free' | 'structured';
 
 function formatRetryTime(milliseconds: number): string {
   const totalSeconds = Math.max(1, Math.ceil(milliseconds / 1000));
@@ -27,15 +33,22 @@ function formatRetryTime(milliseconds: number): string {
 }
 
 interface InputHeroProps {
-  onSubmit: (prompt: string) => void;
+  onSubmit: (payload: string | PlanningPayload) => void;
   loading?: boolean;
   error?: PlanningError | null;
 }
 
 export default function InputHero({ onSubmit, loading, error }: InputHeroProps) {
+  const [mode, setMode] = useState<InputMode>('free');
   const [value, setValue] = useState('');
+  const [structuredPrompt, setStructuredPrompt] = useState('');
+  const [returnToStart, setReturnToStart] = useState(true);
   const [retryRemainingMs, setRetryRemainingMs] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const structuredTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const originAutocomplete = useAutocomplete('origin');
+  const destinationAutocomplete = useAutocomplete('destination');
 
   useEffect(() => {
     const duration = error?.retryAfterMs ?? 0;
@@ -51,16 +64,40 @@ export default function InputHero({ onSubmit, loading, error }: InputHeroProps) 
     return () => window.clearInterval(timer);
   }, [error?.retryAfterMs]);
 
+  // Free mode validation
   const charCount = value.length;
   const isOverLimit = charCount > MAX_CHARS;
   const isEmpty = value.trim().length === 0;
-  const canSubmit = !isEmpty && !isOverLimit && !loading && retryRemainingMs <= 0;
+
+  // Structured mode validation
+  const structuredCharCount = structuredPrompt.length;
+  const isStructuredOverLimit = structuredCharCount > MAX_CHARS;
+  const hasOrigin = originAutocomplete.selectedPlace !== null;
+  const hasStructuredPrompt = structuredPrompt.trim().length > 0;
+  const hasDestination = returnToStart || destinationAutocomplete.selectedPlace !== null;
+
+  const canSubmitFree = !isEmpty && !isOverLimit && !loading && retryRemainingMs <= 0;
+  const canSubmitStructured = hasOrigin && hasStructuredPrompt && !isStructuredOverLimit && hasDestination && !loading && retryRemainingMs <= 0;
+  const canSubmit = mode === 'free' ? canSubmitFree : canSubmitStructured;
 
   const handleSubmit = useCallback(() => {
-    if (canSubmit) {
+    if (!canSubmit) return;
+
+    if (mode === 'free') {
       onSubmit(value.trim());
+    } else {
+      const payload: PlanningPayload = {
+        prompt: structuredPrompt.trim(),
+        origin: originAutocomplete.selectedPlace!,
+      };
+      if (returnToStart) {
+        payload.destination = originAutocomplete.selectedPlace!;
+      } else if (destinationAutocomplete.selectedPlace) {
+        payload.destination = destinationAutocomplete.selectedPlace;
+      }
+      onSubmit(payload);
     }
-  }, [canSubmit, onSubmit, value]);
+  }, [canSubmit, mode, value, structuredPrompt, originAutocomplete.selectedPlace, destinationAutocomplete.selectedPlace, returnToStart, onSubmit]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -80,6 +117,13 @@ export default function InputHero({ onSubmit, loading, error }: InputHeroProps) 
 
   return (
     <section className="input-hero" aria-labelledby="hero-heading">
+      <img
+        src="/logo-hero.png"
+        alt=""
+        className="hero-logo"
+        width="64"
+        height="64"
+      />
       <h1 id="hero-heading" className="hero-headline">
         Describe your day.
         <br />
@@ -89,6 +133,30 @@ export default function InputHero({ onSubmit, loading, error }: InputHeroProps) 
         Verified stops, real hours, and the shortest feasible order.
       </p>
 
+      {/* Mode toggle */}
+      <div className="mode-toggle" role="tablist" aria-label="Input mode">
+        <button
+          role="tab"
+          aria-selected={mode === 'free'}
+          aria-controls="panel-free"
+          className={`mode-tab ${mode === 'free' ? 'mode-tab--active' : ''}`}
+          onClick={() => setMode('free')}
+          type="button"
+        >
+          Describe freely
+        </button>
+        <button
+          role="tab"
+          aria-selected={mode === 'structured'}
+          aria-controls="panel-structured"
+          className={`mode-tab ${mode === 'structured' ? 'mode-tab--active' : ''}`}
+          onClick={() => setMode('structured')}
+          type="button"
+        >
+          Choose details
+        </button>
+      </div>
+
       <form
         className="prompt-form"
         onSubmit={(e) => {
@@ -97,27 +165,92 @@ export default function InputHero({ onSubmit, loading, error }: InputHeroProps) 
         }}
         aria-label="Plan your day"
       >
-        <div className="textarea-wrapper">
-          <textarea
-            ref={textareaRef}
-            className={`prompt-input ${isOverLimit ? 'prompt-input--error' : ''}`}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Venice, 09:00–17:00, architecture and quiet streets, on foot"
-            rows={3}
-            aria-label="Describe your day"
-            aria-describedby="char-count privacy-note"
-            aria-invalid={isOverLimit || undefined}
-          />
-          <span
-            id="char-count"
-            className={`char-count ${isOverLimit ? 'char-count--error' : ''}`}
-            aria-live="polite"
-          >
-            {charCount} / {MAX_CHARS}
-          </span>
-        </div>
+        {/* Free mode panel */}
+        {mode === 'free' && (
+          <div id="panel-free" role="tabpanel" aria-labelledby="hero-heading">
+            <div className="textarea-wrapper">
+              <textarea
+                ref={textareaRef}
+                className={`prompt-input ${isOverLimit ? 'prompt-input--error' : ''}`}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Venice, 09:00–17:00, architecture and quiet streets, on foot"
+                rows={3}
+                aria-label="Describe your day"
+                aria-describedby="char-count privacy-note"
+                aria-invalid={isOverLimit || undefined}
+              />
+              <span
+                id="char-count"
+                className={`char-count ${isOverLimit ? 'char-count--error' : ''}`}
+                aria-live="polite"
+              >
+                {charCount} / {MAX_CHARS}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Structured mode panel */}
+        {mode === 'structured' && (
+          <div id="panel-structured" role="tabpanel" className="structured-panel">
+            <PlaceAutocomplete
+              autocomplete={originAutocomplete}
+              label="Start location"
+              placeholder="Search for your starting point…"
+              required
+            />
+
+            <div className="destination-section">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={returnToStart}
+                  onChange={(e) => setReturnToStart(e.target.checked)}
+                  className="checkbox-input"
+                />
+                <span className="checkbox-text">End where I started</span>
+              </label>
+
+              {!returnToStart && (
+                <PlaceAutocomplete
+                  autocomplete={destinationAutocomplete}
+                  label="End location"
+                  placeholder="Search for your ending point…"
+                  required
+                />
+              )}
+            </div>
+
+            <SelectionMap
+              origin={originAutocomplete.selectedPlace}
+              destination={!returnToStart ? destinationAutocomplete.selectedPlace : null}
+            />
+
+            <div className="textarea-wrapper">
+              <textarea
+                ref={structuredTextareaRef}
+                className={`prompt-input ${isStructuredOverLimit ? 'prompt-input--error' : ''}`}
+                value={structuredPrompt}
+                onChange={(e) => setStructuredPrompt(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="09:00–17:00, architecture and quiet streets, on foot"
+                rows={2}
+                aria-label="Date, time, and interests"
+                aria-describedby="structured-char-count privacy-note"
+                aria-invalid={isStructuredOverLimit || undefined}
+              />
+              <span
+                id="structured-char-count"
+                className={`char-count ${isStructuredOverLimit ? 'char-count--error' : ''}`}
+                aria-live="polite"
+              >
+                {structuredCharCount} / {MAX_CHARS}
+              </span>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="input-error" role="alert">
@@ -139,21 +272,23 @@ export default function InputHero({ onSubmit, loading, error }: InputHeroProps) 
         </button>
       </form>
 
-      <div className="examples-section">
-        <span className="examples-label">Try an example</span>
-        <div className="examples-row" role="group" aria-label="Example requests">
-          {EXAMPLES.map((ex) => (
-            <button
-              key={ex.label}
-              className="example-button"
-              type="button"
-              onClick={() => handleExampleClick(ex.text)}
-            >
-              {ex.label}
-            </button>
-          ))}
+      {mode === 'free' && (
+        <div className="examples-section">
+          <span className="examples-label">Try an example</span>
+          <div className="examples-row" role="group" aria-label="Example requests">
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex.label}
+                className="example-button"
+                type="button"
+                onClick={() => handleExampleClick(ex.text)}
+              >
+                {ex.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <p id="privacy-note" className="privacy-note">
         Do not enter sensitive personal information.{' '}
@@ -171,9 +306,23 @@ const styles = `
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding-top: var(--space-8);
+  padding-top: var(--space-7);
   max-width: 640px;
   margin: 0 auto;
+}
+
+.hero-logo {
+  width: 56px;
+  height: 56px;
+  margin-bottom: var(--space-4);
+  border-radius: 12px;
+}
+
+@media (min-width: 640px) {
+  .hero-logo {
+    width: 64px;
+    height: 64px;
+  }
 }
 
 .hero-headline {
@@ -196,7 +345,37 @@ const styles = `
   font-size: 17px;
   line-height: 27px;
   color: var(--color-ink-muted);
-  margin-bottom: var(--space-7);
+  margin-bottom: var(--space-6);
+}
+
+.mode-toggle {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  margin-bottom: var(--space-5);
+}
+
+.mode-tab {
+  font-size: 13px;
+  font-weight: 600;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  color: var(--color-ink-muted);
+  min-height: 44px;
+  transition: all var(--duration-fast) ease;
+}
+
+.mode-tab--active {
+  color: var(--color-ink);
+  background: var(--color-surface-strong);
+  box-shadow: 0 1px 3px rgb(43 35 38 / 0.08);
+}
+
+.mode-tab:hover:not(.mode-tab--active) {
+  color: var(--color-ink);
 }
 
 .prompt-form {
@@ -204,6 +383,40 @@ const styles = `
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  text-align: left;
+}
+
+.structured-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.destination-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.checkbox-input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.checkbox-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink);
 }
 
 .textarea-wrapper {
@@ -319,6 +532,7 @@ const styles = `
   margin-top: var(--space-5);
   font-size: 12px;
   color: var(--color-ink-muted);
+  text-align: center;
 }
 
 .privacy-note a {

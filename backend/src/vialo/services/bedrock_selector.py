@@ -232,6 +232,48 @@ class BedrockCandidateSelector:
             )
         return repaired
 
+    def repair(self, repair_context: str) -> str:
+        """Call Bedrock Converse for candidate repair exactly once.
+
+        Uses the same spend limiter for atomic budget control.
+        Returns the raw text response for parsing by the caller.
+
+        Raises:
+            BudgetExceededError: If budget cap would be exceeded.
+            SelectorError: If Bedrock call fails.
+        """
+        system = [
+            {
+                "text": (
+                    "You are a repair agent for a travel itinerary planner. "
+                    "Given failed candidates with their diagnostics and "
+                    "Google-supplied alternatives, "
+                    "decide how to fix each one. "
+                    "Return ONLY a JSON array of decisions. "
+                    "Do not emit prose or markdown fences."
+                )
+            }
+        ]
+        messages: list[dict[str, Any]] = [{"role": "user", "content": [{"text": repair_context}]}]
+
+        try:
+            response = self._call_converse_with_budget(system, messages)
+        except BudgetExceededError:
+            raise
+        except (BotoCoreError, ClientError) as exc:
+            raise SelectorError(
+                code=DiagnosticCode.PROVIDER_UNAVAILABLE,
+                message="Repair provider unavailable",
+            ) from exc
+
+        text = self._extract_text(response)
+        if text is None:
+            raise SelectorError(
+                code=DiagnosticCode.MODEL_OUTPUT_INVALID,
+                message="Repair returned empty response",
+            )
+        return text
+
     def _extract_text(self, response: dict[str, Any]) -> str | None:
         """Extract text from Bedrock Converse response output."""
         output = response.get("output", {})

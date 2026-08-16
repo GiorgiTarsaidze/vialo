@@ -181,6 +181,7 @@ class ItineraryResponse(ApiModel):
     travel_mode: TravelMode
     window: TimeWindow
     origin: GroundedPlace
+    destination: GroundedPlace | None = None
     stops: list[GroundedStop]
     timeline: list[TimelineEntry]
     dropped_stops: list[DroppedStop]

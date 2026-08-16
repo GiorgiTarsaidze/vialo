@@ -1,15 +1,10 @@
 """POST /api/itineraries — itinerary planning route.
 
-Key fixes (H):
-- Validate PlanItineraryRequest with Pydantic
-- Map selector codes correctly
-- Do not return raw provider errors
-- Improved scope guard: reject input lacking time/day AND place/travel intent
-- All provider clients close exactly once
-- Return typed diagnostics for no-feasible/excluded cases
-- Walking beta warning diagnostic (I)
-- Cache integration (B)
-- Partial status on grounding exclusion OR solver drop (C)
+Integrated features:
+- Structured origin/destination canonicalization via PlacesClient.get_place(placeId)
+- Fixed destination support through matrix/solver/geometry/handoff
+- One bounded repair pass between grounding and matrix
+- Honest comparison with same origin/stops/destination parity
 """
 
 from __future__ import annotations
@@ -37,10 +32,16 @@ from vialo.models.itinerary import (
     RouteMetrics,
     TimeWindow,
 )
+from vialo.models.providers import GroundedPlace
 from vialo.models.requests import PlanItineraryRequest
 from vialo.pipeline.compute_matrix import compute_matrix
 from vialo.pipeline.compute_route_geometry import RouteGeometry, compute_route_geometry
-from vialo.pipeline.ground_places import ground_origin, ground_places
+from vialo.pipeline.ground_places import GroundingDiagnostic, ground_origin, ground_places
+from vialo.pipeline.repair_candidates import (
+    build_repair_context,
+    collect_alternatives,
+    parse_repair_decisions,
+)
 from vialo.pipeline.solve_route import solve_route
 from vialo.services.bedrock_selector import BedrockCandidateSelector
 from vialo.services.candidate_selector import SelectorError
@@ -56,11 +57,9 @@ from vialo.services.spend_limiter import (
 )
 
 MAX_PROMPT_LENGTH = 500
+MAX_REPAIR_CANDIDATES = 5
 
 # Scope guard: reject obvious non-itinerary input
-# Must have BOTH:
-#   1) Some place/location/travel intent
-#   2) No injection/abuse patterns
 _ABUSE_PATTERNS = re.compile(
     r"|".join(
         [
@@ -73,10 +72,47 @@ _ABUSE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Two signal families combined: travel-activity terms and place-type terms.
+# At least one match from either family satisfies the place/travel requirement.
+# Uses optional plural suffixes and multi-word phrases to cover common morphology
+# without admitting arbitrary non-travel requests.
 _PLACE_INTENT_PATTERNS = re.compile(
-    r"\b(visit|see|explore|walk|drive|tour|sightseeing|itinerary|city|town|museum|"
-    r"church|park|restaurant|hotel|station|airport|rome|venice|paris|london|tokyo|"
-    r"barcelona|florence|naples|milan)\b",
+    r"|".join(
+        [
+            # --- Travel activity signals ---
+            r"\bvisit(?:ing|s)?\b",
+            r"\bsee(?:ing)?\b",
+            r"\bsights(?:eeing)?s?\b",
+            r"\bexplor(?:e|ing)\b",
+            r"\bwalk(?:ing|s)?\b",
+            r"\b(?:on|by)\s+foot\b",
+            r"\bdriv(?:e|ing)\b",
+            r"\btour(?:ing|s)?\b",
+            r"\bitinerar(?:y|ies)\b",
+            r"\battraction(?:s)?\b",
+            r"\blandmark(?:s)?\b",
+            r"\bstart(?:ing)?\s+(?:at|from)\b",
+            # --- Place-type signals ---
+            r"\bcit(?:y|ies)\b",
+            r"\btown(?:s)?\b",
+            r"\bmuseum(?:s)?\b",
+            r"\bchurch(?:es)?\b",
+            r"\bcathedral(?:s)?\b",
+            r"\btemple(?:s)?\b",
+            r"\bpark(?:s)?\b",
+            r"\brestaurant(?:s)?\b",
+            r"\bsquare(?:s)?\b",
+            r"\bpalace(?:s)?\b",
+            r"\bcastle(?:s)?\b",
+            r"\bhotel(?:s)?\b",
+            r"\bstation(?:s)?\b",
+            r"\bairport(?:s)?\b",
+            r"\bmarket(?:s)?\b",
+            r"\bgarden(?:s)?\b",
+            r"\bbridge(?:s)?\b",
+            r"\bmonument(?:s)?\b",
+        ]
+    ),
     re.IGNORECASE,
 )
 _TIME_INTENT_PATTERNS = re.compile(
@@ -87,7 +123,6 @@ _TIME_INTENT_PATTERNS = re.compile(
 
 
 def _record_latency(name: str, started_at: float) -> None:
-    """Emit a fixed-name pipeline latency metric."""
     metrics.add_metric(
         name=name,
         unit="Milliseconds",
@@ -95,15 +130,17 @@ def _record_latency(name: str, started_at: float) -> None:
     )
 
 
-def _is_off_topic(prompt: str) -> bool:
-    """Reject abuse or prompts without both place and time intent."""
+def _is_off_topic(prompt: str, *, has_structured_origin: bool = False) -> bool:
     if _ABUSE_PATTERNS.search(prompt):
         return True
+    if has_structured_origin:
+        # Structured origin satisfies the place/city requirement;
+        # only require a time/day signal in the prompt.
+        return not _TIME_INTENT_PATTERNS.search(prompt)
     return not (_PLACE_INTENT_PATTERNS.search(prompt) and _TIME_INTENT_PATTERNS.search(prompt))
 
 
 def _error_response(code: DiagnosticCode, message: str, status_code: int = 400) -> Response:  # type: ignore[type-arg]
-    """Build a JSON error response with typed diagnostic."""
     body = json.dumps(
         {
             "error": {"code": code.value, "message": message},
@@ -118,13 +155,101 @@ def _error_response(code: DiagnosticCode, message: str, status_code: int = 400) 
 
 
 def _get_client_ip() -> str:
-    """Extract client IP from the event, with privacy-safe fallback."""
     try:
         rc = app.current_event.request_context
         source_ip: str = rc.http.source_ip
         return source_ip
     except (AttributeError, TypeError):
         return "unknown"
+
+
+def _canonicalize_place(
+    place_ref: Any,
+    client: PlacesClient,
+    cache: PlaceCacheRepository,
+) -> GroundedPlace | None:
+    """Canonicalize a PlaceReference via get_place. Returns None if not found."""
+    result = client.get_place(place_ref.place_id)
+    if result is None:
+        return None
+    from vialo.pipeline.ground_places import _result_to_grounded_place
+
+    place = _result_to_grounded_place(result)
+    return place
+
+
+def _resolve_requested_date(
+    requested_date: dt.date | None,
+    local_start_time: dt.time,
+    origin_tz: str,
+    *,
+    now_utc: dt.datetime | None = None,
+) -> dt.date:
+    """Resolve an omitted date to the next upcoming local start.
+
+    Explicit model-parsed dates are preserved. For date-less prompts, use today
+    when the requested start is still ahead in the origin timezone; otherwise
+    roll to tomorrow instead of creating a schedule that begins in the past.
+    """
+    if requested_date is not None:
+        return requested_date
+
+    from zoneinfo import ZoneInfo
+
+    now = now_utc or dt.datetime.now(dt.UTC)
+    local_today = now.astimezone(ZoneInfo(origin_tz)).date()
+    start_today = validate_local_time(local_start_time, local_today, origin_tz)
+    if start_today <= now:
+        return local_today + dt.timedelta(days=1)
+    return local_today
+
+
+def _build_selection_prompt(
+    raw_prompt: str,
+    canonical_origin: GroundedPlace | None,
+    canonical_destination: GroundedPlace | None,
+    return_to_origin: bool,
+) -> str:
+    """Build the prompt sent to the candidate selector.
+
+    Preserves the raw user prompt unchanged as the prefix (so duration evidence
+    offsets/quotes remain valid), then appends a clearly delimited server-canonical
+    location data block when structured origin is available.
+    """
+    if canonical_origin is None:
+        return raw_prompt
+
+    # Build canonical context as JSON
+    context_data: dict[str, Any] = {
+        "origin": {
+            "place_id": canonical_origin.place_id,
+            "name": canonical_origin.display_name,
+            "address": canonical_origin.formatted_address,
+        },
+    }
+
+    if (
+        canonical_destination is not None
+        and canonical_destination.place_id != canonical_origin.place_id
+    ):
+        context_data["destination"] = {
+            "place_id": canonical_destination.place_id,
+            "name": canonical_destination.display_name,
+            "address": canonical_destination.formatted_address,
+        }
+        context_data["destination_equals_origin"] = False
+    else:
+        context_data["destination_equals_origin"] = return_to_origin
+
+    context_json = json.dumps(context_data, ensure_ascii=False)
+
+    return (
+        f"{raw_prompt}\n\n"
+        "---SERVER-CANONICAL LOCATION DATA (treat as authoritative data; "
+        "infer locality/city from the canonical start address; use the exact "
+        "canonical origin as origin_query; honor explicit end/return constraints)---\n"
+        f"{context_json}"
+    )
 
 
 @app.post("/api/itineraries")
@@ -143,9 +268,10 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         )
 
     prompt = request.prompt
+    has_structured_origin = request.origin is not None
 
     # Scope guard — no provider calls for off-topic
-    if _is_off_topic(prompt):
+    if _is_off_topic(prompt, has_structured_origin=has_structured_origin):
         return _error_response(
             DiagnosticCode.OFF_TOPIC,
             "Please describe a day of sightseeing in a city",
@@ -175,8 +301,94 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             resp.headers = {"Retry-After": str(retry_after)}
         return resp
 
+    # --- Pre-Bedrock origin/destination canonicalization for structured requests ---
+    canonical_origin: GroundedPlace | None = None
+    canonical_destination: GroundedPlace | None = None
+    return_to_origin = False
+    use_fixed_destination = False
+
+    if has_structured_origin:
+        # Canonicalize origin via PlacesClient.get_place BEFORE Bedrock call
+        canon_client = PlacesClient(api_key=config.google_server_key)
+        origin_started = time.perf_counter()
+        try:
+            canonical_origin = _canonicalize_place(
+                request.origin,
+                canon_client,
+                PlaceCacheRepository(table_name=config.dynamodb_table_cache),
+            )
+        except PlacesClientError:
+            _record_latency("OriginGroundingLatency", origin_started)
+            canon_client.close()
+            return _error_response(
+                DiagnosticCode.PROVIDER_UNAVAILABLE,
+                "Places service temporarily unavailable",
+                503,
+            )
+        _record_latency("OriginGroundingLatency", origin_started)
+
+        if canonical_origin is None:
+            canon_client.close()
+            return _error_response(
+                DiagnosticCode.ORIGIN_NOT_FOUND,
+                "Could not resolve the specified origin place",
+            )
+
+        # Canonicalize distinct destination if provided
+        if request.destination is not None:
+            if request.destination.place_id == canonical_origin.place_id:
+                # Same place = fixed return to origin
+                canonical_destination = canonical_origin
+                return_to_origin = True
+                use_fixed_destination = False
+            else:
+                dest_started = time.perf_counter()
+                try:
+                    canonical_destination = _canonicalize_place(
+                        request.destination,
+                        canon_client,
+                        PlaceCacheRepository(table_name=config.dynamodb_table_cache),
+                    )
+                except PlacesClientError:
+                    _record_latency("DestinationGroundingLatency", dest_started)
+                    canon_client.close()
+                    return _error_response(
+                        DiagnosticCode.PROVIDER_UNAVAILABLE,
+                        "Places service temporarily unavailable",
+                        503,
+                    )
+                _record_latency("DestinationGroundingLatency", dest_started)
+
+                if canonical_destination is None:
+                    canon_client.close()
+                    return _error_response(
+                        DiagnosticCode.DESTINATION_NOT_FOUND,
+                        "Could not resolve the specified destination place",
+                    )
+
+                # Validate timezone compatibility
+                from vialo.domain.timezones import is_same_timezone
+
+                if not is_same_timezone(
+                    canonical_destination.time_zone_id, canonical_origin.time_zone_id
+                ):
+                    canon_client.close()
+                    return _error_response(
+                        DiagnosticCode.DESTINATION_NOT_FOUND,
+                        "Destination is in a different timezone than the origin",
+                    )
+
+                use_fixed_destination = True
+                return_to_origin = False
+
+        canon_client.close()
+
+    # Build the selection prompt: raw user prompt + optional canonical context
+    selection_prompt = _build_selection_prompt(
+        prompt, canonical_origin, canonical_destination, return_to_origin
+    )
+
     # Step 1: Select candidate stops via Bedrock Claude
-    # Construct spend limiter, then selector owns it for per-call reserve/settle
     spend_limiter = BedrockSpendLimiter(
         table_name=config.dynamodb_table_rate_limits,
         monthly_cap_micro_usd=config.bedrock_monthly_budget_micro_usd,
@@ -193,7 +405,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
 
     selection_started = time.perf_counter()
     try:
-        intent = selector.select(prompt)
+        intent = selector.select(selection_prompt)
     except BudgetExceededError:
         _record_latency("CandidateSelectionLatency", selection_started)
         return _error_response(
@@ -223,47 +435,58 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         )
     _record_latency("CandidateSelectionLatency", selection_started)
 
-    # Instantiate cache
-    place_cache = PlaceCacheRepository(
-        table_name=config.dynamodb_table_cache,
-    )
+    # Override intent return_to_origin with structured constraint
+    if has_structured_origin:
+        intent.return_to_origin = return_to_origin
 
-    # Step 2a: Ground origin separately via Places API
+    # Instantiate cache and places client for grounding candidates
+    place_cache = PlaceCacheRepository(table_name=config.dynamodb_table_cache)
     places_client = PlacesClient(api_key=config.google_server_key)
-    origin_started = time.perf_counter()
-    try:
-        origin = ground_origin(
-            origin_query=intent.origin_query,
-            locality=intent.locality_query,
-            client=places_client,
-            cache=place_cache,
-        )
-    except PlacesClientError:
-        _record_latency("OriginGroundingLatency", origin_started)
-        places_client.close()
-        return _error_response(
-            DiagnosticCode.PROVIDER_UNAVAILABLE,
-            "Places service temporarily unavailable",
-            503,
-        )
-    _record_latency("OriginGroundingLatency", origin_started)
 
-    if origin is None:
-        places_client.close()
-        return _error_response(
-            DiagnosticCode.ORIGIN_NOT_FOUND,
-            "Could not resolve the requested starting point unambiguously",
-        )
+    # --- Ground origin for non-structured requests (legacy flow) ---
+    if not has_structured_origin:
+        origin_started = time.perf_counter()
+        try:
+            canonical_origin = ground_origin(
+                origin_query=intent.origin_query,
+                locality=intent.locality_query,
+                client=places_client,
+                cache=place_cache,
+            )
+        except PlacesClientError:
+            _record_latency("OriginGroundingLatency", origin_started)
+            places_client.close()
+            return _error_response(
+                DiagnosticCode.PROVIDER_UNAVAILABLE,
+                "Places service temporarily unavailable",
+                503,
+            )
+        _record_latency("OriginGroundingLatency", origin_started)
+
+        if canonical_origin is None:
+            places_client.close()
+            return _error_response(
+                DiagnosticCode.ORIGIN_NOT_FOUND,
+                "Could not resolve the requested starting point unambiguously",
+            )
+        return_to_origin = intent.return_to_origin
+
+    # Handle structured destination for non-structured requests (not applicable,
+    # destination requires origin) — destination already handled above for structured.
+    # For legacy flow, no destination override exists.
+
+    # At this point canonical_origin is guaranteed non-None (early returns above).
+    assert canonical_origin is not None
 
     # Origin timezone controls date/window validation
-    origin_tz = origin.time_zone_id
+    origin_tz = canonical_origin.time_zone_id
 
-    # Resolve the requested date
-    requested_date = intent.requested_date
-    if requested_date is None:
-        from vialo.domain.timezones import local_today
-
-        requested_date = local_today(origin_tz)
+    # Resolve an omitted date to the next upcoming local start.
+    requested_date = _resolve_requested_date(
+        intent.requested_date,
+        intent.local_start_time,
+        origin_tz,
+    )
 
     # Reject past dates
     from vialo.domain.timezones import local_today as _local_today
@@ -304,7 +527,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             "Time window is entirely in the past",
         )
 
-    # Step 2b: Ground candidate stops — with cache and origin timezone enforcement
+    # Step 2b: Ground candidate stops
     grounding_started = time.perf_counter()
     try:
         grounded_stops, grounding_diagnostics = ground_places(
@@ -316,6 +539,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             origin_tz=origin_tz,
         )
     except PlacesClientError:
+        places_client.close()
         return _error_response(
             DiagnosticCode.PROVIDER_UNAVAILABLE,
             "Places service temporarily unavailable",
@@ -323,7 +547,270 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         )
     finally:
         _record_latency("CandidateGroundingLatency", grounding_started)
-        places_client.close()
+
+    # --- Criterion F: One repair pass for failed candidates ---
+    repairable_codes = {
+        DiagnosticCode.PLACE_NOT_FOUND,
+        DiagnosticCode.HOURS_UNAVAILABLE,
+        DiagnosticCode.CLOSED_ON_DATE,
+    }
+    failed_for_repair = [d for d in grounding_diagnostics if d.code in repairable_codes][
+        :MAX_REPAIR_CANDIDATES
+    ]
+
+    if failed_for_repair:
+        repair_started = time.perf_counter()
+        try:
+            # Collect Google alternatives for failed candidates
+            alternatives_by_index = collect_alternatives(
+                failed_diagnostics=failed_for_repair,
+                candidates=intent.candidates,
+                locality=intent.locality_query,
+                client=places_client,
+            )
+
+            # Only proceed if there are actual alternatives to offer
+            if any(alts for alts in alternatives_by_index.values()):
+                accepted_names = [s.name for s in grounded_stops]
+                repair_context = build_repair_context(
+                    failed=failed_for_repair,
+                    candidates=intent.candidates,
+                    accepted_names=accepted_names,
+                    locality=intent.locality_query,
+                    alternatives_by_index=alternatives_by_index,
+                    original_prompt=prompt,
+                )
+
+                # Call repair through the selector's spend limiter (exactly once)
+                try:
+                    repair_response_text = selector.repair(repair_context)
+                    decisions = parse_repair_decisions(repair_response_text)
+                except (BudgetExceededError, SpendLimiterUnavailableError):
+                    decisions = []
+                except SelectorError:
+                    decisions = []
+
+                # Validate and apply decisions
+                failed_indices = {d.candidate_index for d in failed_for_repair}
+                candidate_by_index = {c.candidate_index: c for c in intent.candidates}
+
+                for decision in decisions:
+                    if decision.candidate_index not in failed_indices:
+                        continue  # reject decisions for non-failed indices
+
+                    if decision.action == "select_alternative":
+                        # Validate selected place_id is in supplied alternatives
+                        alts = alternatives_by_index.get(decision.candidate_index, [])
+                        valid_pids = {a["place_id"] for a in alts}
+                        if (
+                            not decision.selected_place_id
+                            or decision.selected_place_id not in valid_pids
+                        ):
+                            # Reject: arbitrary place_id
+                            grounding_diagnostics.append(
+                                GroundingDiagnostic(
+                                    candidate_index=decision.candidate_index,
+                                    name=candidate_by_index[decision.candidate_index].name,
+                                    code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+                                    detail="Selected place ID not in supplied alternatives",
+                                )
+                            )
+                            continue
+
+                        # Re-ground the selected alternative
+                        try:
+                            result = places_client.get_place(decision.selected_place_id)
+                        except PlacesClientError:
+                            result = None
+
+                        if result is not None and result.time_zone_id:
+                            from vialo.domain.opening_hours import normalize_opening_hours
+                            from vialo.domain.timezones import is_same_timezone
+                            from vialo.pipeline.ground_places import (
+                                _result_to_grounded_place,
+                            )
+
+                            place = _result_to_grounded_place(result)
+
+                            # Must be same timezone
+                            if not is_same_timezone(place.time_zone_id, origin_tz):
+                                grounding_diagnostics.append(
+                                    GroundingDiagnostic(
+                                        candidate_index=decision.candidate_index,
+                                        name=place.display_name,
+                                        code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+                                        detail="Replacement is outside origin timezone",
+                                    )
+                                )
+                                continue
+
+                            # Check hours
+                            hours = normalize_opening_hours(
+                                current_hours=result.current_opening_hours,
+                                regular_hours=result.regular_opening_hours,
+                                requested_date=requested_date,
+                                tz_id=place.time_zone_id,
+                                fetch_instant=dt.datetime.now(dt.UTC),
+                            )
+                            if isinstance(hours, DiagnosticCode):
+                                # Don't override known closed/missing hours
+                                grounding_diagnostics.append(
+                                    GroundingDiagnostic(
+                                        candidate_index=decision.candidate_index,
+                                        name=place.display_name,
+                                        code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+                                        detail=f"Replacement has hours issue: {hours.value}",
+                                    )
+                                )
+                                continue
+
+                            # Success - add repaired stop
+                            orig_candidate = candidate_by_index[decision.candidate_index]
+                            from vialo.models.itinerary import GroundedStop
+
+                            repaired_stop = GroundedStop(
+                                candidate_index=decision.candidate_index,
+                                name=place.display_name,
+                                category=orig_candidate.category,
+                                priority=orig_candidate.priority,
+                                visit_duration_minutes=orig_candidate.visit_duration_minutes,
+                                duration_source=orig_candidate.duration_source,
+                                place=place,
+                                hours_source="current",
+                                open_intervals=hours,
+                            )
+                            grounded_stops.append(repaired_stop)
+
+                            # Remove superseded failure diagnostic
+                            grounding_diagnostics = [
+                                d
+                                for d in grounding_diagnostics
+                                if d.candidate_index != decision.candidate_index
+                                or d.code not in repairable_codes
+                            ]
+                            # Add repaired diagnostic
+                            grounding_diagnostics.append(
+                                GroundingDiagnostic(
+                                    candidate_index=decision.candidate_index,
+                                    name=place.display_name,
+                                    code=DiagnosticCode.CANDIDATE_REPAIRED,
+                                    detail=f"Replaced with {place.display_name}",
+                                )
+                            )
+                        else:
+                            grounding_diagnostics.append(
+                                GroundingDiagnostic(
+                                    candidate_index=decision.candidate_index,
+                                    name=candidate_by_index[decision.candidate_index].name,
+                                    code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+                                    detail="Could not resolve selected alternative",
+                                )
+                            )
+
+                    elif decision.action == "replace_query":
+                        # Validate query is bounded and concrete
+                        query = decision.replacement_query or ""
+                        if not query or len(query) > 100 or len(query) < 3:
+                            grounding_diagnostics.append(
+                                GroundingDiagnostic(
+                                    candidate_index=decision.candidate_index,
+                                    name=candidate_by_index[decision.candidate_index].name,
+                                    code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+                                    detail="Replacement query invalid",
+                                )
+                            )
+                            continue
+
+                        # Re-ground with replacement query (once, no recursion)
+                        try:
+                            from vialo.domain.opening_hours import normalize_opening_hours
+                            from vialo.domain.timezones import is_same_timezone
+                            from vialo.pipeline.ground_places import (
+                                _result_to_grounded_place,
+                                _select_unambiguous_result,
+                            )
+
+                            results = places_client.search_text(query, intent.locality_query)
+                            selected = _select_unambiguous_result(
+                                query, intent.locality_query, results
+                            )
+                        except PlacesClientError:
+                            selected = None
+
+                        if (
+                            selected is not None
+                            and selected.time_zone_id
+                            and is_same_timezone(selected.time_zone_id, origin_tz)
+                        ):
+                            place = _result_to_grounded_place(selected)
+                            hours = normalize_opening_hours(
+                                current_hours=selected.current_opening_hours,
+                                regular_hours=selected.regular_opening_hours,
+                                requested_date=requested_date,
+                                tz_id=place.time_zone_id,
+                                fetch_instant=dt.datetime.now(dt.UTC),
+                            )
+                            if isinstance(hours, DiagnosticCode):
+                                grounding_diagnostics.append(
+                                    GroundingDiagnostic(
+                                        candidate_index=decision.candidate_index,
+                                        name=query,
+                                        code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+                                        detail=f"Replacement has hours issue: {hours.value}",
+                                    )
+                                )
+                                continue
+
+                            orig_candidate = candidate_by_index[decision.candidate_index]
+                            from vialo.models.itinerary import GroundedStop
+
+                            repaired_stop = GroundedStop(
+                                candidate_index=decision.candidate_index,
+                                name=place.display_name,
+                                category=orig_candidate.category,
+                                priority=orig_candidate.priority,
+                                visit_duration_minutes=orig_candidate.visit_duration_minutes,
+                                duration_source=orig_candidate.duration_source,
+                                place=place,
+                                hours_source="current",
+                                open_intervals=hours,
+                            )
+                            grounded_stops.append(repaired_stop)
+
+                            grounding_diagnostics = [
+                                d
+                                for d in grounding_diagnostics
+                                if d.candidate_index != decision.candidate_index
+                                or d.code not in repairable_codes
+                            ]
+                            grounding_diagnostics.append(
+                                GroundingDiagnostic(
+                                    candidate_index=decision.candidate_index,
+                                    name=place.display_name,
+                                    code=DiagnosticCode.CANDIDATE_REPAIRED,
+                                    detail=f"Replaced with {place.display_name} via query",
+                                )
+                            )
+                        else:
+                            grounding_diagnostics.append(
+                                GroundingDiagnostic(
+                                    candidate_index=decision.candidate_index,
+                                    name=candidate_by_index[decision.candidate_index].name,
+                                    code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+                                    detail="Replacement query did not resolve",
+                                )
+                            )
+                    # action == "skip" — leave existing failure diagnostic
+        except Exception:
+            logger.exception("Repair pass failed")
+        finally:
+            _record_latency("RepairLatency", repair_started)
+
+        # Re-sort grounded stops after repair
+        grounded_stops.sort(key=lambda stop: stop.candidate_index)
+
+    # Close places client after all grounding/repair
+    places_client.close()
 
     for metric_name, attribute in (
         ("PlaceCacheHit", "hits"),
@@ -334,7 +821,28 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         if isinstance(metric_value, int):
             metrics.add_metric(name=metric_name, unit="Count", value=metric_value)
 
-    # If all stops excluded, return NO_FEASIBLE_ITINERARY with diagnostics (C)
+    # Populate photoUrl on grounded places
+    from vialo.api.photos import build_photo_url
+
+    for stop in grounded_stops:
+        if stop.place.photos and not stop.place.photo_url:
+            first_photo = stop.place.photos[0]
+            if first_photo.name:
+                stop.place.photo_url = build_photo_url(first_photo.name, 400)
+    if canonical_origin.photos and not canonical_origin.photo_url:
+        first_photo = canonical_origin.photos[0]
+        if first_photo.name:
+            canonical_origin.photo_url = build_photo_url(first_photo.name, 400)
+    if (
+        canonical_destination
+        and canonical_destination.photos
+        and not canonical_destination.photo_url
+    ):
+        first_photo = canonical_destination.photos[0]
+        if first_photo.name:
+            canonical_destination.photo_url = build_photo_url(first_photo.name, 400)
+
+    # If all stops excluded, return NO_FEASIBLE_ITINERARY with diagnostics
     if not grounded_stops:
         response_diagnostics: list[Diagnostic] = []
         for diag in grounding_diagnostics:
@@ -363,15 +871,16 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             body=body_data,
         )
 
-    # Step 3: Compute travel-time matrix
+    # Step 3: Compute travel-time matrix (with optional destination sink)
     routes_client = RoutesClient(api_key=config.google_server_key)
     matrix_started = time.perf_counter()
     try:
         matrix = compute_matrix(
-            origin=origin,
+            origin=canonical_origin,
             stops=grounded_stops,
             travel_mode=intent.travel_mode,
             client=routes_client,
+            destination=canonical_destination if use_fixed_destination else None,
         )
     except RoutesClientError:
         _record_latency("RouteMatrixLatency", matrix_started)
@@ -386,19 +895,25 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
     # Build original matrix indices BEFORE any drops
     original_matrix_indices = {s.candidate_index: i + 1 for i, s in enumerate(grounded_stops)}
 
+    # Destination index in matrix (if used): last position
+    destination_matrix_index: int | None = None
+    if use_fixed_destination:
+        destination_matrix_index = len(grounded_stops) + 1
+
     # Step 4: Solve the route
     solver_started = time.perf_counter()
-    result = solve_route(
+    solve_result = solve_route(
         stops=grounded_stops,
         matrix=matrix,
         window_start=window_start,
         window_end=window_end,
-        return_to_origin=intent.return_to_origin,
+        return_to_origin=return_to_origin,
         travel_mode=intent.travel_mode,
+        destination_index=destination_matrix_index,
     )
     _record_latency("ExactSolverLatency", solver_started)
 
-    if result is None:
+    if solve_result is None:
         routes_client.close()
         return _error_response(
             DiagnosticCode.NO_FEASIBLE_ITINERARY,
@@ -406,7 +921,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             422,
         )
 
-    schedule, dropped = result
+    schedule, dropped = solve_result
 
     # Determine which stops are in the final schedule
     retained_candidate_indices = set(schedule.order)
@@ -423,11 +938,12 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
 
     try:
         optimized_geometry = compute_route_geometry(
-            origin=origin,
+            origin=canonical_origin,
             ordered_stops=ordered_stops,
             travel_mode=intent.travel_mode,
             client=routes_client,
-            return_to_origin=intent.return_to_origin,
+            return_to_origin=return_to_origin,
+            destination=canonical_destination if use_fixed_destination else None,
         )
 
         # Naive geometry: stops in original candidate order
@@ -438,11 +954,12 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         ]
         naive_ordered_stops = [stop_by_ci[ci] for ci in naive_order_indices if ci in stop_by_ci]
         naive_geometry = compute_route_geometry(
-            origin=origin,
+            origin=canonical_origin,
             ordered_stops=naive_ordered_stops,
             travel_mode=intent.travel_mode,
             client=routes_client,
-            return_to_origin=intent.return_to_origin,
+            return_to_origin=return_to_origin,
+            destination=canonical_destination if use_fixed_destination else None,
         )
     except RoutesClientError:
         pass  # Comparison will be unavailable
@@ -467,7 +984,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             stop_order=optimized_geometry.stop_order,
         )
 
-    # Simulate naive order with ORIGINAL matrix indices preserved (F)
+    # Simulate naive order with ORIGINAL matrix indices
     naive_candidate_order = [s.candidate_index for s in grounded_stops]
     _naive_timeline, naive_feasible, naive_codes = simulate_naive_order(
         retained_stops=retained_stops,
@@ -476,9 +993,10 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         matrix=matrix,
         window_start=window_start,
         window_end=window_end,
-        return_to_origin=intent.return_to_origin,
+        return_to_origin=return_to_origin,
         travel_mode=intent.travel_mode,
         original_matrix_indices=original_matrix_indices,
+        destination_index=destination_matrix_index,
     )
 
     comparison = build_comparison(
@@ -493,19 +1011,23 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
 
     # Build Maps handoff
     handoff = build_handoff(
-        origin=origin,
+        origin=canonical_origin,
         ordered_stops=ordered_stops,
         travel_mode=intent.travel_mode,
-        return_to_origin=intent.return_to_origin,
+        return_to_origin=return_to_origin,
+        destination=canonical_destination if use_fixed_destination else None,
     )
 
     # Build response
     request_id = str(uuid.uuid4())
 
-    # Status is "partial" when ANY grounding exclusion OR solver drop exists (C)
-    has_exclusions = len(grounding_diagnostics) > 0
+    # Status is "partial" when ANY grounding exclusion OR solver drop exists
     has_drops = len(dropped) > 0
-    itinerary_status: str = "partial" if (has_exclusions or has_drops) else "complete"
+    # Simpler: partial if there are failure diagnostics or drops
+    failure_diags = [
+        d for d in grounding_diagnostics if d.code != DiagnosticCode.CANDIDATE_REPAIRED
+    ]
+    itinerary_status: str = "partial" if (failure_diags or has_drops) else "complete"
 
     # Build diagnostics
     response_diagnostics_list: list[Diagnostic] = []
@@ -519,7 +1041,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             )
         )
 
-    # Walking beta warning (I) — required by Google docs for walking routes
+    # Walking beta warning
     if intent.travel_mode == "WALK":
         response_diagnostics_list.append(
             Diagnostic(
@@ -531,16 +1053,26 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             )
         )
 
-    grounding_dropped = [
-        DroppedStop(
+    dropped_by_candidate: dict[int, DroppedStop] = {}
+    for diag in grounding_diagnostics:
+        if diag.code not in {
+            DiagnosticCode.PLACE_NOT_FOUND,
+            DiagnosticCode.HOURS_UNAVAILABLE,
+            DiagnosticCode.CLOSED_ON_DATE,
+            DiagnosticCode.OUTSIDE_LOCALITY,
+            DiagnosticCode.DUPLICATE_PLACE,
+            DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+        }:
+            continue
+        # A failed repair follows the original grounding failure for the same
+        # candidate. Keep the final diagnosis without counting that stop twice.
+        dropped_by_candidate[diag.candidate_index] = DroppedStop(
             candidate_index=diag.candidate_index,
             name=diag.name,
             reason_code=diag.code,
             reason_detail=diag.detail,
         )
-        for diag in grounding_diagnostics
-    ]
-    all_dropped = grounding_dropped + dropped
+    all_dropped = list(dropped_by_candidate.values()) + dropped
 
     if comparison.status == "unavailable":
         response_diagnostics_list.append(
@@ -564,7 +1096,12 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         deletion_secret=config.share_deletion_secret,
     )
 
-    # Build response WITHOUT proof first, then sign and attach
+    # Determine response destination field
+    # Only set when explicitly supplied (including same as origin)
+    response_destination: GroundedPlace | None = None
+    if request.destination is not None:
+        response_destination = canonical_destination
+
     response_obj = ItineraryResponse(
         schema_version=1,
         request_id=request_id,
@@ -578,7 +1115,8 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             local_end=intent.local_end_time.strftime("%H:%M"),
             date=requested_date,
         ),
-        origin=origin,
+        origin=canonical_origin,
+        destination=response_destination,
         stops=ordered_stops,
         timeline=schedule.timeline,
         dropped_stops=all_dropped,
@@ -586,7 +1124,7 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         maps_handoff=handoff,
         totals=schedule.totals,
         diagnostics=response_diagnostics_list,
-        share_proof=None,  # Excluded from HMAC computation
+        share_proof=None,
     )
 
     # Generate proof over response WITHOUT proof (canonical)

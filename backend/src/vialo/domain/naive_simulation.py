@@ -44,6 +44,7 @@ def simulate_naive_order(
     return_to_origin: bool,
     travel_mode: TravelMode = "WALK",
     original_matrix_indices: dict[int, int] | None = None,
+    destination_index: int | None = None,
 ) -> tuple[list[TravelEntry | WaitEntry | VisitEntry], bool, list[str]]:
     """Simulate the naive (original candidate) order.
 
@@ -59,6 +60,8 @@ def simulate_naive_order(
         original_matrix_indices: Mapping from candidate_index to matrix index.
             If provided, uses this mapping directly instead of computing from
             retained_stops position. This preserves correct indices even after drops.
+        destination_index: If set, mandatory final travel leg to this matrix index.
+            Overrides return_to_origin in the simulation.
 
     Returns:
         Tuple of (timeline, feasible, infeasibility_codes).
@@ -162,8 +165,34 @@ def simulate_naive_order(
         current_time = visit_end
         prev_matrix_idx = stop_matrix_idx
 
-    # Return to origin
-    if feasible and return_to_origin:
+    # Final leg: destination or return to origin
+    if feasible and destination_index is not None:
+        edge = matrix[prev_matrix_idx][destination_index]
+        if not edge.reachable or edge.duration_seconds is None:
+            feasible = False
+            infeasibility_codes.append("DESTINATION_UNREACHABLE")
+        else:
+            travel_seconds = edge.duration_seconds
+            distance_meters = edge.distance_meters or 0
+            departure = current_time
+            arrival = current_time + dt.timedelta(seconds=travel_seconds)
+            if arrival > window_end:
+                feasible = False
+                infeasibility_codes.append("DESTINATION_EXCEEDS_WINDOW")
+            else:
+                timeline.append(
+                    TravelEntry(
+                        type="travel",
+                        from_index=prev_matrix_idx,
+                        to_index=destination_index,
+                        mode=travel_mode,
+                        duration_seconds=travel_seconds,
+                        distance_meters=distance_meters,
+                        departure=departure,
+                        arrival=arrival,
+                    )
+                )
+    elif feasible and return_to_origin:
         edge = matrix[prev_matrix_idx][origin_index]
         if not edge.reachable or edge.duration_seconds is None:
             feasible = False

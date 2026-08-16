@@ -2,8 +2,8 @@
  * Typed same-origin API client for Vialo.
  * All requests go to /api/* which CloudFront routes to API Gateway.
  */
-import type { ItineraryResponse, CreateShareResponse } from './types';
-import { isItineraryResponse, isCreateShareResponse, isApiError } from './guards';
+import type { ItineraryResponse, CreateShareResponse, PlanningPayload, AutocompleteResponse } from './types';
+import { isItineraryResponse, isCreateShareResponse, isApiError, isAutocompleteResponse } from './guards';
 
 export class ApiClientError extends Error {
   constructor(
@@ -60,16 +60,47 @@ async function handleResponse<T>(
 }
 
 export async function planItinerary(
-  prompt: string,
+  payload: string | PlanningPayload,
   signal?: AbortSignal,
 ): Promise<ItineraryResponse> {
+  const body: PlanningPayload =
+    typeof payload === 'string' ? { prompt: payload } : payload;
+  // Strip location from origin/destination — backend only accepts placeId/displayName/formattedAddress
+  const sanitized: PlanningPayload = { prompt: body.prompt };
+  if (body.origin) {
+    sanitized.origin = {
+      placeId: body.origin.placeId,
+      displayName: body.origin.displayName,
+      formattedAddress: body.origin.formattedAddress,
+    };
+  }
+  if (body.destination) {
+    sanitized.destination = {
+      placeId: body.destination.placeId,
+      displayName: body.destination.displayName,
+      formattedAddress: body.destination.formattedAddress,
+    };
+  }
   const response = await fetch('/api/itineraries', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify(sanitized),
     signal,
   });
   return handleResponse(response, isItineraryResponse);
+}
+
+export async function fetchAutocomplete(
+  query: string,
+  signal?: AbortSignal,
+): Promise<AutocompleteResponse> {
+  const response = await fetch('/api/places/autocomplete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+    signal,
+  });
+  return handleResponse(response, isAutocompleteResponse);
 }
 
 export async function createShare(

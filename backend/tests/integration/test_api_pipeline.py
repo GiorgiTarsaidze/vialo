@@ -123,7 +123,7 @@ class TestRateLimiting:
 
     def test_rate_limited_response(self) -> None:
         """Rate-limited requests get 429 with Retry-After."""
-        event = _make_apigw_event("POST", "/api/itineraries", {"prompt": "Venice today"})
+        event = _make_apigw_event("POST", "/api/itineraries", {"prompt": "Walk Venice today"})
 
         with patch("vialo.api.itineraries.RateLimiter") as mock_rl_cls:
             mock_rl = MagicMock()
@@ -188,7 +188,7 @@ class TestExcludedHours:
         """Stops without usable opening hours are excluded, never synthesize 00:00-24:00."""
         from vialo.models.providers import CandidateStop, StopCategory
 
-        event = _make_apigw_event("POST", "/api/itineraries", {"prompt": "Venice today"})
+        event = _make_apigw_event("POST", "/api/itineraries", {"prompt": "Walk Venice today"})
 
         mock_intent = MagicMock()
         mock_intent.origin_query = "Hotel Danieli"
@@ -484,13 +484,19 @@ class TestCompletePipelineContract:
                 DiagnosticCode.PLACE_NOT_FOUND,
                 "Could not resolve place",
             )
+            failed_repair = GroundingDiagnostic(
+                1,
+                "Unresolved Place",
+                DiagnosticCode.CANDIDATE_REPAIR_FAILED,
+                "No verified replacement could be grounded",
+            )
             solver_drop = DroppedStop(
                 candidate_index=2,
                 name="Late Museum",
                 reason_code=DiagnosticCode.NO_FEASIBLE_ITINERARY,
                 reason_detail="Could not fit before closing",
             )
-            ground_places.return_value = ([stop], [grounding_exclusion])
+            ground_places.return_value = ([stop], [grounding_exclusion, failed_repair])
             routes_class.return_value.close.reset_mock()
             places_class.return_value.close.reset_mock()
             with (
@@ -515,6 +521,11 @@ class TestCompletePipelineContract:
         partial_body = json.loads(partial_response["body"])
         assert partial_body["status"] == "partial"
         assert {item["candidateIndex"] for item in partial_body["droppedStops"]} == {1, 2}
+        assert len(partial_body["droppedStops"]) == 2
+        unresolved = next(
+            item for item in partial_body["droppedStops"] if item["candidateIndex"] == 1
+        )
+        assert unresolved["reasonCode"] == "CANDIDATE_REPAIR_FAILED"
         assert {item["code"] for item in partial_body["diagnostics"]} >= {
             "PLACE_NOT_FOUND",
             "WALKING_ROUTES_BETA",
@@ -605,3 +616,779 @@ class TestSpendLimiterUnavailableReturns503:
         assert "DynamoDB" not in body["error"]["message"]
         assert "ConditionalCheckFailedException" not in body["error"]["message"]
         assert "budget reservation" not in body["error"]["message"]
+
+
+class TestStructuredEndpointContract:
+    """Structured place IDs are canonicalized and become real route constraints."""
+
+    def test_place_ids_override_model_origin_and_wire_fixed_destination(self) -> None:
+        from zoneinfo import ZoneInfo
+
+        from vialo.domain.route_matrix import MatrixEdge
+        from vialo.domain.solver import FeasibleSchedule, SolverObjective
+        from vialo.models.itinerary import GroundedStop, OpenInterval, ShareProof, Totals
+        from vialo.models.providers import (
+            CandidateStop,
+            GroundedPlace,
+            Location,
+            ParsedIntent,
+            StopCategory,
+        )
+        from vialo.pipeline.compute_route_geometry import RouteGeometry
+        from vialo.services.places_client import PlacesSearchResult
+
+        requested = dt.datetime.now(ZoneInfo("Europe/Rome")).date() + dt.timedelta(days=1)
+        start = dt.datetime.combine(requested, dt.time(9), tzinfo=ZoneInfo("Europe/Rome"))
+        end = dt.datetime.combine(requested, dt.time(18), tzinfo=ZoneInfo("Europe/Rome"))
+        candidate = CandidateStop(
+            candidate_index=0,
+            name="Test Museum",
+            category=StopCategory.MUSEUM_GALLERY,
+            priority=1,
+            visit_duration_minutes=60,
+            duration_source="model_estimate",
+        )
+        intent = ParsedIntent(
+            locality_query="Venice",
+            origin_query="Model guessed origin",
+            requested_date=requested,
+            local_start_time=dt.time(9),
+            local_end_time=dt.time(18),
+            travel_mode="WALK",
+            return_to_origin=True,
+            candidates=[candidate],
+        )
+
+        def place_result(place_id: str, name: str, lat: float) -> PlacesSearchResult:
+            return PlacesSearchResult(
+                place_id=place_id,
+                display_name=name,
+                formatted_address=f"Canonical {name} address",
+                latitude=lat,
+                longitude=12.34,
+                primary_type="lodging",
+                time_zone_id="Europe/Rome",
+                current_opening_hours=None,
+                regular_opening_hours=None,
+                photos=[],
+            )
+
+        canonical_origin_result = place_result("canonical-origin", "Canonical Origin", 45.43)
+        canonical_destination_result = place_result(
+            "canonical-destination", "Canonical Destination", 45.45
+        )
+        stop = GroundedStop(
+            candidate_index=0,
+            name="Test Museum",
+            category=StopCategory.MUSEUM_GALLERY,
+            priority=1,
+            visit_duration_minutes=60,
+            duration_source="model_estimate",
+            place=GroundedPlace(
+                place_id="museum",
+                display_name="Test Museum",
+                formatted_address="Canonical museum address",
+                location=Location(latitude=45.44, longitude=12.35),
+                time_zone_id="Europe/Rome",
+            ),
+            hours_source="current",
+            open_intervals=[
+                OpenInterval(start=start, end=end, local_start="09:00", local_end="18:00")
+            ],
+        )
+        matrix = [
+            [MatrixEdge(i, j, 0 if i == j else 500, 0 if i == j else 300, True) for j in range(3)]
+            for i in range(3)
+        ]
+        schedule = FeasibleSchedule(
+            order=[0],
+            timeline=[],
+            objective=SolverObjective(600, 0, int(start.timestamp()) + 4200, (0,)),
+            totals=Totals(
+                visit_seconds=3600,
+                travel_seconds=600,
+                wait_seconds=0,
+                elapsed_seconds=4200,
+            ),
+            travel_mode="WALK",
+        )
+        geometry = RouteGeometry("encoded", 1000, 600, [0])
+        proof = ShareProof(
+            expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5),
+            hmac="b" * 64,
+        )
+        event = _make_apigw_event(
+            "POST",
+            "/api/itineraries",
+            {
+                "prompt": "Walk Venice tomorrow from 09:00 to 18:00",
+                "origin": {
+                    "placeId": "canonical-origin",
+                    "displayName": "Untrusted browser origin label",
+                    "formattedAddress": "Untrusted browser origin address",
+                },
+                "destination": {
+                    "placeId": "canonical-destination",
+                    "displayName": "Untrusted browser destination label",
+                    "formattedAddress": "Untrusted browser destination address",
+                },
+            },
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as selector_class,
+            patch("vialo.api.itineraries.BedrockSpendLimiter"),
+            patch("vialo.api.itineraries.PlaceCacheRepository"),
+            patch("vialo.api.itineraries.PlacesClient") as places_class,
+            patch("vialo.api.itineraries.RoutesClient"),
+            patch("vialo.api.itineraries.ground_origin") as ground_origin,
+            patch("vialo.api.itineraries.ground_places", return_value=([stop], [])),
+            patch("vialo.api.itineraries.compute_matrix", return_value=matrix) as compute_matrix,
+            patch("vialo.api.itineraries.solve_route", return_value=(schedule, [])) as solve_route,
+            patch(
+                "vialo.api.itineraries.compute_route_geometry",
+                side_effect=[geometry, geometry],
+            ) as compute_geometry,
+            patch("vialo.api.itineraries.ShareRepository") as share_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            selector_class.return_value.select.return_value = intent
+            places_class.return_value.get_place.side_effect = [
+                canonical_origin_result,
+                canonical_destination_result,
+            ]
+            share_class.return_value.generate_proof.return_value = proof
+
+            response = lambda_handler(event, _mock_context())
+
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["origin"]["placeId"] == "canonical-origin"
+        assert body["origin"]["displayName"] == "Canonical Origin"
+        assert body["destination"]["placeId"] == "canonical-destination"
+        assert body["destination"]["displayName"] == "Canonical Destination"
+        assert "Untrusted browser" not in response["body"]
+        ground_origin.assert_not_called()
+        assert places_class.return_value.get_place.call_count == 2
+
+        matrix_kwargs = compute_matrix.call_args.kwargs
+        assert matrix_kwargs["origin"].place_id == "canonical-origin"
+        assert matrix_kwargs["destination"].place_id == "canonical-destination"
+        solver_kwargs = solve_route.call_args.kwargs
+        assert solver_kwargs["return_to_origin"] is False
+        assert solver_kwargs["destination_index"] == 2
+        assert compute_geometry.call_count == 2
+        for call in compute_geometry.call_args_list:
+            assert call.kwargs["destination"].place_id == "canonical-destination"
+        assert "destination_place_id=canonical-destination" in body["mapsHandoff"]["fullRouteUrl"]
+
+
+class TestRepairEndpointBoundary:
+    """The evidence-based repair pass is single-call and allow-list constrained."""
+
+    def test_one_repair_call_rejects_unsupplied_place_id(self) -> None:
+        from zoneinfo import ZoneInfo
+
+        from vialo.models.diagnostics import DiagnosticCode
+        from vialo.models.providers import (
+            CandidateStop,
+            GroundedPlace,
+            Location,
+            ParsedIntent,
+            StopCategory,
+        )
+        from vialo.pipeline.ground_places import GroundingDiagnostic
+
+        requested = dt.datetime.now(ZoneInfo("Europe/Rome")).date() + dt.timedelta(days=1)
+        candidate = CandidateStop(
+            candidate_index=0,
+            name="Dinner in Venice",
+            category=StopCategory.FOOD_BREAK,
+            priority=1,
+            visit_duration_minutes=60,
+            duration_source="model_estimate",
+        )
+        intent = ParsedIntent(
+            locality_query="Venice",
+            origin_query="Hotel Danieli",
+            requested_date=requested,
+            local_start_time=dt.time(9),
+            local_end_time=dt.time(18),
+            travel_mode="WALK",
+            return_to_origin=False,
+            candidates=[candidate],
+        )
+        origin = GroundedPlace(
+            place_id="origin",
+            display_name="Hotel Danieli",
+            formatted_address="Venice",
+            location=Location(latitude=45.43, longitude=12.34),
+            time_zone_id="Europe/Rome",
+        )
+        failed = GroundingDiagnostic(
+            candidate_index=0,
+            name="Dinner in Venice",
+            code=DiagnosticCode.PLACE_NOT_FOUND,
+            detail="Could not resolve a concrete venue",
+        )
+        event = _make_apigw_event(
+            "POST",
+            "/api/itineraries",
+            {"prompt": "Walk Venice tomorrow from 09:00 to 18:00 with dinner"},
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as selector_class,
+            patch("vialo.api.itineraries.BedrockSpendLimiter"),
+            patch("vialo.api.itineraries.PlaceCacheRepository"),
+            patch("vialo.api.itineraries.PlacesClient") as places_class,
+            patch("vialo.api.itineraries.ground_origin", return_value=origin),
+            patch("vialo.api.itineraries.ground_places", return_value=([], [failed])),
+            patch(
+                "vialo.api.itineraries.collect_alternatives",
+                return_value={
+                    0: [
+                        {
+                            "place_id": "allowed-google-place",
+                            "display_name": "Allowed Osteria",
+                            "formatted_address": "Venice",
+                            "primary_type": "restaurant",
+                        }
+                    ]
+                },
+            ),
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            selector = selector_class.return_value
+            selector.select.return_value = intent
+            selector.repair.return_value = json.dumps(
+                [
+                    {
+                        "candidate_index": 0,
+                        "action": "select_alternative",
+                        "selected_place_id": "attacker-injected-place",
+                    }
+                ]
+            )
+
+            response = lambda_handler(event, _mock_context())
+
+        assert response["statusCode"] == 422
+        selector.repair.assert_called_once()
+        places_class.return_value.get_place.assert_not_called()
+        body = json.loads(response["body"])
+        assert body["error"]["code"] == "NO_FEASIBLE_ITINERARY"
+        assert any(item["code"] == "CANDIDATE_REPAIR_FAILED" for item in body["diagnostics"])
+
+
+class TestAutocompleteEndpointContract:
+    def test_query_returns_location_backed_predictions_with_minimal_fields(self) -> None:
+        from vialo.services.places_client import AUTOCOMPLETE_FIELD_MASK, PlacesSearchResult
+
+        event = _make_apigw_event(
+            "POST",
+            "/api/places/autocomplete",
+            {"query": "Tbilisi Sports Palace"},
+        )
+        result = PlacesSearchResult(
+            place_id="sports-palace-id",
+            display_name="Tbilisi Sports Palace",
+            formatted_address="26 May Square, Tbilisi",
+            latitude=41.718,
+            longitude=44.779,
+            primary_type=None,
+            time_zone_id=None,
+            current_opening_hours=None,
+            regular_opening_hours=None,
+            photos=[],
+        )
+
+        with (
+            patch("vialo.api.places.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.places.PlacesClient") as places_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            places_class.return_value.search_text.return_value = [result]
+            response = lambda_handler(event, _mock_context())
+
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body == {
+            "predictions": [
+                {
+                    "placeId": "sports-palace-id",
+                    "displayName": "Tbilisi Sports Palace",
+                    "formattedAddress": "26 May Square, Tbilisi",
+                    "location": {"latitude": 41.718, "longitude": 44.779},
+                }
+            ]
+        }
+        places_class.return_value.search_text.assert_called_once_with(
+            "Tbilisi Sports Palace",
+            "",
+            field_mask=AUTOCOMPLETE_FIELD_MASK,
+        )
+        places_class.return_value.close.assert_called_once_with()
+
+
+class TestPhotoEndpointContract:
+    @staticmethod
+    def _photo_event(name: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        event = _make_apigw_event("GET", "/api/photos")
+        event["rawQueryString"] = f"name={quote(name, safe='')}&maxWidth=400"
+        event["queryStringParameters"] = {"name": name, "maxWidth": "400"}
+        return event
+
+    def test_photo_proxy_is_rate_limited_before_google(self) -> None:
+        event = self._photo_event("places/ChIJtest/photos/photoRef")
+        with (
+            patch("vialo.api.photos.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.photos.httpx.Client") as http_client_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (
+                False,
+                1786953600,
+            )
+            response = lambda_handler(event, _mock_context())
+
+        assert response["statusCode"] == 429
+        assert json.loads(response["body"])["error"]["code"] == "RATE_LIMITED"
+        http_client_class.assert_not_called()
+
+    def test_photo_proxy_redirect_never_exposes_server_key(self) -> None:
+        event = self._photo_event("places/ChIJtest/photos/photoRef")
+        signed_uri = "https://lh3.googleusercontent.com/places/test=s400"
+        with (
+            patch("vialo.api.photos.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.photos.httpx.Client") as http_client_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            upstream = http_client_class.return_value.get.return_value
+            upstream.status_code = 200
+            upstream.json.return_value = {"photoUri": signed_uri}
+            response = lambda_handler(event, _mock_context())
+
+        assert response["statusCode"] == 307
+        assert response["headers"]["Location"] == signed_uri
+        serialized = json.dumps(response)
+        assert "test-server-key" not in serialized
+        request_headers = http_client_class.return_value.get.call_args.kwargs["headers"]
+        assert request_headers["X-Goog-Api-Key"] == "test-server-key"
+        assert http_client_class.return_value.close.called
+
+
+class TestStructuredContextFix:
+    """A city-free prompt with structured origin canonicalizes before Bedrock,
+    augments the selector prompt with canonical context, and succeeds through
+    the full pipeline without calling get_place again for the origin."""
+
+    def test_city_free_prompt_with_structured_origin_succeeds(self) -> None:
+        """The production bug: prompt has no city, but structured origin provides it.
+        Origin is canonicalized BEFORE Bedrock, canonical context is appended to the
+        selector prompt, and the origin place_id is fetched exactly once."""
+        from zoneinfo import ZoneInfo
+
+        from vialo.domain.route_matrix import MatrixEdge
+        from vialo.domain.solver import FeasibleSchedule, SolverObjective
+        from vialo.models.itinerary import GroundedStop, OpenInterval, ShareProof, Totals
+        from vialo.models.providers import (
+            CandidateStop,
+            GroundedPlace,
+            Location,
+            ParsedIntent,
+            StopCategory,
+        )
+        from vialo.pipeline.compute_route_geometry import RouteGeometry
+        from vialo.services.places_client import PlacesSearchResult
+
+        requested = dt.datetime.now(ZoneInfo("Asia/Tbilisi")).date() + dt.timedelta(days=2)
+        start = dt.datetime.combine(requested, dt.time(12), tzinfo=ZoneInfo("Asia/Tbilisi"))
+        end = dt.datetime.combine(requested, dt.time(18), tzinfo=ZoneInfo("Asia/Tbilisi"))
+
+        # Canonical origin from get_place
+        canonical_origin_result = PlacesSearchResult(
+            place_id="ChIJ_sports_palace",
+            display_name="Tbilisi Sports Palace",
+            formatted_address="26 May Square, Tbilisi, Georgia",
+            latitude=41.718,
+            longitude=44.779,
+            primary_type="sports_complex",
+            time_zone_id="Asia/Tbilisi",
+            current_opening_hours=None,
+            regular_opening_hours=None,
+            photos=[],
+        )
+
+        candidate = CandidateStop(
+            candidate_index=0,
+            name="Narikala Fortress",
+            category=StopCategory.LANDMARK,
+            priority=1,
+            visit_duration_minutes=45,
+            duration_source="model_estimate",
+        )
+        intent = ParsedIntent(
+            locality_query="Tbilisi",
+            origin_query="Tbilisi Sports Palace",
+            requested_date=requested,
+            local_start_time=dt.time(12),
+            local_end_time=dt.time(18),
+            travel_mode="WALK",
+            return_to_origin=False,
+            candidates=[candidate],
+        )
+        stop = GroundedStop(
+            candidate_index=0,
+            name="Narikala Fortress",
+            category=StopCategory.LANDMARK,
+            priority=1,
+            visit_duration_minutes=45,
+            duration_source="model_estimate",
+            place=GroundedPlace(
+                place_id="narikala_id",
+                display_name="Narikala Fortress",
+                formatted_address="Tbilisi, Georgia",
+                location=Location(latitude=41.687, longitude=44.809),
+                time_zone_id="Asia/Tbilisi",
+            ),
+            hours_source="current",
+            open_intervals=[
+                OpenInterval(start=start, end=end, local_start="12:00", local_end="18:00")
+            ],
+        )
+        matrix = [
+            [MatrixEdge(i, j, 0 if i == j else 800, 0 if i == j else 600, True) for j in range(2)]
+            for i in range(2)
+        ]
+        schedule = FeasibleSchedule(
+            order=[0],
+            timeline=[],
+            objective=SolverObjective(600, 0, int(start.timestamp()) + 3300, (0,)),
+            totals=Totals(
+                visit_seconds=2700,
+                travel_seconds=600,
+                wait_seconds=0,
+                elapsed_seconds=3300,
+            ),
+            travel_mode="WALK",
+        )
+        geometry = RouteGeometry("encoded", 800, 600, [0])
+        proof = ShareProof(
+            expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5),
+            hmac="c" * 64,
+        )
+
+        # The production prompt that failed: no city, no place keyword
+        prompt_text = (
+            "On August 18, 2026, from 12:00 to 18:00,"
+            " plan five sightseeing stops and dinner, on foot."
+        )
+        event = _make_apigw_event(
+            "POST",
+            "/api/itineraries",
+            {
+                "prompt": prompt_text,
+                "origin": {
+                    "placeId": "ChIJ_sports_palace",
+                    "displayName": "Untrusted browser label",
+                    "formattedAddress": "Untrusted browser address",
+                },
+            },
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as selector_class,
+            patch("vialo.api.itineraries.BedrockSpendLimiter"),
+            patch("vialo.api.itineraries.PlaceCacheRepository"),
+            patch("vialo.api.itineraries.PlacesClient") as places_class,
+            patch("vialo.api.itineraries.RoutesClient"),
+            patch("vialo.api.itineraries.ground_origin") as ground_origin_fn,
+            patch("vialo.api.itineraries.ground_places", return_value=([stop], [])),
+            patch("vialo.api.itineraries.compute_matrix", return_value=matrix),
+            patch("vialo.api.itineraries.solve_route", return_value=(schedule, [])),
+            patch(
+                "vialo.api.itineraries.compute_route_geometry",
+                side_effect=[geometry, geometry],
+            ),
+            patch("vialo.api.itineraries.ShareRepository") as share_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            selector = selector_class.return_value
+            selector.select.return_value = intent
+            # get_place is called exactly once for the origin canonicalization
+            places_class.return_value.get_place.return_value = canonical_origin_result
+            share_class.return_value.generate_proof.return_value = proof
+
+            response = lambda_handler(event, _mock_context())
+
+        assert response["statusCode"] == 200, json.loads(response["body"])
+        body = json.loads(response["body"])
+        assert body["origin"]["placeId"] == "ChIJ_sports_palace"
+        assert body["origin"]["displayName"] == "Tbilisi Sports Palace"
+
+        # Verify: ground_origin NOT called (structured path)
+        ground_origin_fn.assert_not_called()
+
+        # Verify: get_place called exactly once for origin canonicalization
+        assert places_class.return_value.get_place.call_count == 1
+        places_class.return_value.get_place.assert_called_with("ChIJ_sports_palace")
+
+        # Verify: selector received augmented prompt with canonical context
+        selector_prompt = selector.select.call_args.args[0]
+        # Raw prompt is preserved as prefix
+        assert selector_prompt.startswith(prompt_text)
+        # Canonical data block appended
+        assert "SERVER-CANONICAL LOCATION DATA" in selector_prompt
+        assert "ChIJ_sports_palace" in selector_prompt
+        assert "Tbilisi Sports Palace" in selector_prompt
+        assert "26 May Square, Tbilisi, Georgia" in selector_prompt
+        # Browser labels NOT in selector prompt
+        assert "Untrusted browser label" not in selector_prompt
+        assert "Untrusted browser address" not in selector_prompt
+
+    def test_structured_return_to_origin_context_says_return(self) -> None:
+        """When destination == origin, canonical context says destination_equals_origin = true."""
+        from vialo.services.places_client import PlacesSearchResult
+
+        canonical_origin_result = PlacesSearchResult(
+            place_id="ChIJ_hotel",
+            display_name="Grand Hotel",
+            formatted_address="1 Main St, Tbilisi, Georgia",
+            latitude=41.71,
+            longitude=44.78,
+            primary_type="lodging",
+            time_zone_id="Asia/Tbilisi",
+            current_opening_hours=None,
+            regular_opening_hours=None,
+            photos=[],
+        )
+
+        event = _make_apigw_event(
+            "POST",
+            "/api/itineraries",
+            {
+                "prompt": "From 09:00 to 17:00, sightseeing on foot.",
+                "origin": {
+                    "placeId": "ChIJ_hotel",
+                    "displayName": "Browser Label",
+                },
+                "destination": {
+                    "placeId": "ChIJ_hotel",
+                    "displayName": "Browser Label",
+                },
+            },
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as selector_class,
+            patch("vialo.api.itineraries.BedrockSpendLimiter"),
+            patch("vialo.api.itineraries.PlaceCacheRepository"),
+            patch("vialo.api.itineraries.PlacesClient") as places_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            places_class.return_value.get_place.return_value = canonical_origin_result
+            # Make selector raise to halt pipeline early for assertion
+            from vialo.services.candidate_selector import SelectorError
+
+            selector_class.return_value.select.side_effect = SelectorError(
+                "MODEL_OUTPUT_INVALID", "test halt"
+            )
+
+            lambda_handler(event, _mock_context())
+
+        # The selector was called (proves canonicalization succeeded)
+        selector = selector_class.return_value
+        selector.select.assert_called_once()
+        selector_prompt = selector.select.call_args.args[0]
+
+        # Verify canonical context says return to origin
+        assert '"destination_equals_origin": true' in selector_prompt
+        # Browser labels not leaked
+        assert "Browser Label" not in selector_prompt
+        # get_place called only once (same ID for origin and destination)
+        assert places_class.return_value.get_place.call_count == 1
+
+    def test_structured_distinct_destination_context(self) -> None:
+        """When destination != origin, both are in canonical context with their own data."""
+        from vialo.services.places_client import PlacesSearchResult
+
+        origin_result = PlacesSearchResult(
+            place_id="origin-place",
+            display_name="Start Hotel",
+            formatted_address="10 Start St, Venice, Italy",
+            latitude=45.43,
+            longitude=12.34,
+            primary_type="lodging",
+            time_zone_id="Europe/Rome",
+            current_opening_hours=None,
+            regular_opening_hours=None,
+            photos=[],
+        )
+        dest_result = PlacesSearchResult(
+            place_id="dest-place",
+            display_name="End Restaurant",
+            formatted_address="99 End Ave, Venice, Italy",
+            latitude=45.44,
+            longitude=12.35,
+            primary_type="restaurant",
+            time_zone_id="Europe/Rome",
+            current_opening_hours=None,
+            regular_opening_hours=None,
+            photos=[],
+        )
+
+        event = _make_apigw_event(
+            "POST",
+            "/api/itineraries",
+            {
+                "prompt": "Tomorrow from 10:00 to 20:00 walking tour.",
+                "origin": {
+                    "placeId": "origin-place",
+                    "displayName": "Untrusted",
+                },
+                "destination": {
+                    "placeId": "dest-place",
+                    "displayName": "Untrusted Dest",
+                },
+            },
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as selector_class,
+            patch("vialo.api.itineraries.BedrockSpendLimiter"),
+            patch("vialo.api.itineraries.PlaceCacheRepository"),
+            patch("vialo.api.itineraries.PlacesClient") as places_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            places_class.return_value.get_place.side_effect = [origin_result, dest_result]
+            from vialo.services.candidate_selector import SelectorError
+
+            selector_class.return_value.select.side_effect = SelectorError(
+                "MODEL_OUTPUT_INVALID", "test halt"
+            )
+
+            lambda_handler(event, _mock_context())
+
+        selector = selector_class.return_value
+        selector.select.assert_called_once()
+        selector_prompt = selector.select.call_args.args[0]
+
+        # Both places in canonical context
+        assert "origin-place" in selector_prompt
+        assert "Start Hotel" in selector_prompt
+        assert "10 Start St, Venice, Italy" in selector_prompt
+        assert "dest-place" in selector_prompt
+        assert "End Restaurant" in selector_prompt
+        assert "99 End Ave, Venice, Italy" in selector_prompt
+        assert '"destination_equals_origin": false' in selector_prompt
+        # Browser labels not in prompt
+        assert "Untrusted" not in selector_prompt
+        assert "Untrusted Dest" not in selector_prompt
+        # Two get_place calls: one for origin, one for destination
+        assert places_class.return_value.get_place.call_count == 2
+
+    def test_free_mode_scope_tests_still_work(self) -> None:
+        """Free-mode (no structured origin) still requires place+time in prompt."""
+        # No origin => free mode => needs both place and time patterns
+        # This prompt has time but no place/activity keyword
+        event = _make_apigw_event(
+            "POST",
+            "/api/itineraries",
+            {"prompt": "from 9:00 to 18:00 plan some activities"},
+        )
+        response = lambda_handler(event, _mock_context())
+        assert response["statusCode"] == 400
+        body = json.loads(response["body"])
+        assert body["error"]["code"] == "OFF_TOPIC"
+
+    def test_structured_minimal_prompt_reaches_selector(self) -> None:
+        """The UI placeholder '09:00–17:00, architecture and quiet streets, on foot'
+        reaches the selector (does not get blocked by OFF_TOPIC) when structured origin is set."""
+        from vialo.services.places_client import PlacesSearchResult
+
+        canonical_result = PlacesSearchResult(
+            place_id="ChIJ_placeholder_origin",
+            display_name="Placeholder Hotel",
+            formatted_address="Tbilisi, Georgia",
+            latitude=41.7,
+            longitude=44.8,
+            primary_type="lodging",
+            time_zone_id="Asia/Tbilisi",
+            current_opening_hours=None,
+            regular_opening_hours=None,
+            photos=[],
+        )
+
+        event = _make_apigw_event(
+            "POST",
+            "/api/itineraries",
+            {
+                "prompt": "09:00\u201317:00, architecture and quiet streets, on foot",
+                "origin": {
+                    "placeId": "ChIJ_placeholder_origin",
+                    "displayName": "Browser Label",
+                },
+            },
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as selector_class,
+            patch("vialo.api.itineraries.BedrockSpendLimiter"),
+            patch("vialo.api.itineraries.PlaceCacheRepository"),
+            patch("vialo.api.itineraries.PlacesClient") as places_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            places_class.return_value.get_place.return_value = canonical_result
+            from vialo.services.candidate_selector import SelectorError
+
+            selector_class.return_value.select.side_effect = SelectorError(
+                "MODEL_OUTPUT_INVALID", "test halt"
+            )
+
+            response = lambda_handler(event, _mock_context())
+
+        # The point: selector WAS called (not blocked by scope guard)
+        selector_class.return_value.select.assert_called_once()
+        # And it did NOT return OFF_TOPIC
+        body = json.loads(response["body"])
+        assert body["error"]["code"] != "OFF_TOPIC"
+
+    def test_origin_canonicalization_failure_does_not_call_bedrock(self) -> None:
+        """If origin canonicalization returns None, Bedrock is never called."""
+        event = _make_apigw_event(
+            "POST",
+            "/api/itineraries",
+            {
+                "prompt": "From 10:00 to 18:00 walking.",
+                "origin": {
+                    "placeId": "nonexistent-place-id",
+                    "displayName": "Some Place",
+                },
+            },
+        )
+
+        with (
+            patch("vialo.api.itineraries.RateLimiter") as rate_limiter_class,
+            patch("vialo.api.itineraries.BedrockCandidateSelector") as selector_class,
+            patch("vialo.api.itineraries.BedrockSpendLimiter"),
+            patch("vialo.api.itineraries.PlaceCacheRepository"),
+            patch("vialo.api.itineraries.PlacesClient") as places_class,
+        ):
+            rate_limiter_class.return_value.check_and_increment.return_value = (True, None)
+            places_class.return_value.get_place.return_value = None  # Not found
+
+            response = lambda_handler(event, _mock_context())
+
+        assert response["statusCode"] == 400
+        body = json.loads(response["body"])
+        assert body["error"]["code"] == "ORIGIN_NOT_FOUND"
+        # Bedrock was never called
+        selector_class.return_value.select.assert_not_called()

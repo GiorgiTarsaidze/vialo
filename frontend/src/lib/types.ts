@@ -43,7 +43,10 @@ export type DiagnosticCode =
   | 'AI_BUDGET_EXCEEDED'
   | 'INTERNAL_ERROR'
   | 'WALKING_ROUTES_BETA'
-  | 'GROUNDING_EXCLUSION';
+  | 'GROUNDING_EXCLUSION'
+  | 'CANDIDATE_REPAIRED'
+  | 'CANDIDATE_REPAIR_FAILED'
+  | 'DESTINATION_NOT_FOUND';
 
 // --- Sub-types ---
 
@@ -73,6 +76,23 @@ export interface GroundedPlace {
   primaryType: string | null;
   timeZoneId: string;
   photos: PlacePhoto[];
+  rating?: number | null;
+  userRatingCount?: number | null;
+  /** Server-proxied photo URL — expected but not yet in published schema */
+  photoUrl?: string | null;
+}
+
+// --- Place autocomplete ---
+
+export interface PlaceRef {
+  placeId: string;
+  displayName: string;
+  formattedAddress: string;
+  location?: Location;
+}
+
+export interface AutocompleteResponse {
+  predictions: PlaceRef[];
 }
 
 export interface OpenInterval {
@@ -225,6 +245,7 @@ export interface ItineraryResponse {
   travelMode: TravelMode;
   window: TimeWindow;
   origin: GroundedPlace;
+  destination: GroundedPlace | null;
   stops: GroundedStop[];
   timeline: TimelineEntry[];
   droppedStops: DroppedStop[];
@@ -233,6 +254,14 @@ export interface ItineraryResponse {
   totals: Totals;
   diagnostics: Diagnostic[];
   shareProof: ShareProof | null;
+}
+
+// --- Planning request payload ---
+
+export interface PlanningPayload {
+  prompt: string;
+  origin?: PlaceRef;
+  destination?: PlaceRef;
 }
 
 // --- Share API ---

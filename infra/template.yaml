@@ -257,6 +257,24 @@ Resources:
             ApiId: !Ref VialoApi
             Path: /api/shares/{shareId}
             Method: DELETE
+        PlacesAutocomplete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/places/autocomplete
+            Method: POST
+        PlacesLookup:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/places/lookup
+            Method: POST
+        PhotoProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/photos
+            Method: GET
       Tags:
         Project: vialo
         vialo: "true"
@@ -477,7 +495,7 @@ Resources:
             Protection: true
             Override: true
           ContentSecurityPolicy:
-            ContentSecurityPolicy: "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' https://*.googleapis.com https://*.gstatic.com https://*.ggpht.com https://maps.google.com data: blob:; connect-src 'self' https://maps.googleapis.com https://maps.gstatic.com; frame-src https://www.google.com https://maps.google.com; worker-src blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            ContentSecurityPolicy: "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' https://*.googleapis.com https://*.gstatic.com https://*.ggpht.com https://*.googleusercontent.com https://maps.google.com data: blob:; connect-src 'self' https://maps.googleapis.com https://maps.gstatic.com; frame-src https://www.google.com https://maps.google.com; worker-src blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
             Override: true
 
   # CloudFront Distribution — vialo.place

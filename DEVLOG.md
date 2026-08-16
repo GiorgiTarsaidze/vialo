@@ -235,3 +235,31 @@ The final release gate passes 291 backend tests and 54 frontend tests, Ruff, ESL
 ### Remaining production-host action
 
 The Cloudflare root record is not yet configured. Add a DNS-only root CNAME/flattened record from `vialo.place` to `d1topuming9zvf.cloudfront.net`. The browser key is intentionally restricted to `https://vialo.place/*`, so the temporary CloudFront hostname receives Google's expected `RefererNotAllowedMapError`; after DNS propagation, re-verify root TLS, same-origin API routing, and the visible Maps overlay before claiming the root hostname live.
+
+## 2026-08-16 — Structured routing refactor and production release
+
+### Product and pipeline changes
+
+- Added minimal structured start/end selection while preserving the free-prompt flow. Selected place IDs are canonicalized server-side before candidate selection; browser labels and addresses are never trusted as routing constraints.
+- Carried fixed origin and optional fixed destination through the directed matrix, exact solver, timeline, naive baseline, paired route geometry, and Google Maps handoff. Same-start defaults still return to the origin.
+- Added one bounded candidate-repair pass restricted to Google-supplied alternatives. Repairs cannot inject an unsupplied place ID or invent opening hours; missing hours remain explicit diagnostics.
+- Added same-origin location autocomplete, compact ratings/review counts, and a bounded attributed-photo proxy.
+- Reworked results for responsive timeline/map use, a quieter warm Maps treatment, and one-stop comparison suppression without hiding the useful route map.
+- Integrated the private source logo into committed optimized header, hero, favicon, Apple, PWA, Open Graph, and Twitter assets. The ignored source file remains outside the repository.
+- Replaced static loading boxes with five truthful elapsed pipeline stages plus route and schedule previews, reduced-motion behavior, and an honest slow-provider message.
+
+### Production regressions resolved
+
+- Broadened the zero-spend scope guard with general route and sightseeing vocabulary so the reported Tbilisi prompt is accepted without introducing a finite city allow-list. Dining-only and time-only prompts remain blocked.
+- Date-less windows now use the next upcoming start in the canonical origin timezone: today when the local start is ahead, tomorrow when it has elapsed. Explicit dates are preserved.
+- Origin ranking now separates canonical result-name coverage from address qualifiers, preserves locality checks, normalizes simple English plurals, and resolves `Sport Palace on May Square` to Tbilisi Sports Palace instead of the competing New Sports Palace. Genuine equal-quality ambiguity remains rejected.
+- Dropped candidates are deduplicated by candidate index after repair so one failed candidate cannot inflate the displayed requested-stop total.
+- Replaced date-fragile examples with literal `Tomorrow`, explicit origins, and complete windows.
+
+### Validation and live evidence
+
+- Final backend gate: Ruff format/check, strict mypy, 396 pytest tests, source/transformed SAM lint, and ARM64 layer verification pass.
+- Final frontend gate: generated contract drift check, ESLint, strict TypeScript, 93 Vitest tests, production Vite build, and `npm audit` with zero known vulnerabilities pass.
+- Repository validation, ignored-artifact checks, diff checks, and pending-diff secret scanning pass; credentials, private notes/logo source, SAM output, frontend build output, and coverage artifacts remain excluded.
+- CloudFormation stack `vialo-backend-dev` reached `UPDATE_COMPLETE`; branded frontend assets were published through CloudFront.
+- A fresh Playwright production run of the exact reported prompt returned a real itinerary, not `OFF_TOPIC` or an origin ambiguity. It resolved the intended Tbilisi Sports Palace at May Square, rolled the elapsed 09:00 window to the next local day, scheduled verified stops with ratings and attributed photos, and showed a real route comparison (6.7 km naive versus 5.3 km optimized). The page produced zero console errors.

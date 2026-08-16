@@ -180,16 +180,21 @@ def build_handoff(
     ordered_stops: list[GroundedStop],
     travel_mode: TravelMode,
     return_to_origin: bool,
+    destination: GroundedPlace | None = None,
 ) -> MapsHandoff:
     """Build the complete Maps handoff with full URL and browser-safe parts.
 
+    When destination is provided, all stops are waypoints and destination is the endpoint.
     When return_to_origin is True, all stops are waypoints and destination = origin.
     Otherwise, last stop is the destination and preceding stops are waypoints.
     """
     if not ordered_stops:
-        # No stops — origin to origin (or just origin)
-        dest = origin
+        dest = destination if destination is not None else origin
         waypoint_places: list[GroundedPlace] = []
+    elif destination is not None:
+        # Fixed destination: all stops are waypoints
+        waypoint_places = [s.place for s in ordered_stops]
+        dest = destination
     elif return_to_origin:
         # All stops are waypoints, destination = origin
         waypoint_places = [s.place for s in ordered_stops]

@@ -20,12 +20,13 @@ def _make_search_result(
     tz_id: str | None = "Europe/Rome",
     current_hours: dict[str, Any] | None = None,
     regular_hours: dict[str, Any] | None = None,
+    formatted_address: str = "Test Address",
 ) -> PlacesSearchResult:
     """Create a PlacesSearchResult for testing."""
     return PlacesSearchResult(
         place_id=place_id,
         display_name=display_name,
-        formatted_address="Test Address",
+        formatted_address=formatted_address,
         latitude=45.43,
         longitude=12.34,
         primary_type="landmark",
@@ -72,6 +73,27 @@ class TestGroundOrigin:
 
         result = ground_origin("Nonexistent Hotel", "Venice", client)
         assert result is None
+
+    def test_origin_address_qualifier_breaks_similar_name_tie(self) -> None:
+        """Core name coverage prefers the intended venue despite address words in query."""
+        client = MagicMock()
+        client.search_text.return_value = [
+            _make_search_result(
+                place_id="tbilisi-sports-palace",
+                display_name="Tbilisi Sports Palace",
+                formatted_address="May Square, Tbilisi, Georgia",
+            ),
+            _make_search_result(
+                place_id="new-sports-palace",
+                display_name="New Sports Palace",
+                formatted_address="University Street, Tbilisi, Georgia",
+            ),
+        ]
+
+        result = ground_origin("Sport Palace on May Square", "Tbilisi", client)
+
+        assert result is not None
+        assert result.place_id == "tbilisi-sports-palace"
 
     def test_origin_without_timezone_returns_none(self) -> None:
         """Origin without timezone is rejected."""

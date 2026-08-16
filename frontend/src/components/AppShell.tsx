@@ -22,7 +22,14 @@ export default function AppShell({ children, onNewDay, showBack }: AppShellProps
           </button>
         )}
         <Link to="/" className="wordmark" aria-label="Vialo home">
-          vialo.
+          <img
+            src="/logo.png"
+            alt=""
+            className="wordmark-logo"
+            width="40"
+            height="40"
+          />
+          <span className="wordmark-text">vialo.</span>
         </Link>
       </header>
       <main id="main-content" className="app-main container" role="main" tabIndex={-1}>
@@ -69,12 +76,26 @@ const styles = `
 }
 
 .wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-decoration: none;
+  margin-left: auto;
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.wordmark-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+}
+
+.wordmark-text {
   font-family: var(--font-display);
   font-size: 22px;
   font-weight: 500;
   color: var(--color-primary);
-  text-decoration: none;
-  margin-left: auto;
 }
 
 .back-button {

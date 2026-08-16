@@ -37,14 +37,11 @@ const styles = `
   padding: var(--space-2) 0;
   min-height: 44px;
   align-items: center;
-  background: var(--color-accent-sun-soft);
-  border-radius: var(--radius-input);
-  margin: var(--space-1) 0;
 }
 
 .wait-time {
   font-size: 13px;
-  color: var(--color-warning);
+  color: var(--color-ink-muted);
   text-align: right;
   padding-right: var(--space-2);
   font-weight: 500;
@@ -68,6 +65,9 @@ const styles = `
   flex-direction: column;
   gap: 1px;
   padding-left: var(--space-2);
+  background: var(--color-accent-sun-soft);
+  border-radius: 8px;
+  padding: var(--space-2) var(--space-3);
 }
 
 .wait-label {

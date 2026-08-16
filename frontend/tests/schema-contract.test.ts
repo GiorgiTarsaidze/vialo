@@ -25,7 +25,10 @@ const fixture: ItineraryResponse = {
     primaryType: null,
     timeZoneId: 'Europe/Rome',
     photos: [],
+    rating: null,
+    userRatingCount: null,
   },
+  destination: null,
   stops: [{
     candidateIndex: 0,
     name: 'Verified stop',
@@ -41,6 +44,8 @@ const fixture: ItineraryResponse = {
       primaryType: 'tourist_attraction',
       timeZoneId: 'Europe/Rome',
       photos: [],
+      rating: 4.5,
+      userRatingCount: 1000,
     },
     hoursSource: 'current',
     openIntervals: [{

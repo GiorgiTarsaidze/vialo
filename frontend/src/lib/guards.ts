@@ -2,7 +2,7 @@
  * Runtime type guards for API responses.
  * Validate shape before rendering to prevent rendering garbage from malformed responses.
  */
-import type { ItineraryResponse, CreateShareResponse, ApiError } from './types';
+import type { ItineraryResponse, CreateShareResponse, ApiError, AutocompleteResponse } from './types';
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -25,6 +25,8 @@ export function isItineraryResponse(v: unknown): v is ItineraryResponse {
   if (v['travelMode'] !== 'WALK' && v['travelMode'] !== 'DRIVE') return false;
   if (!isObject(v['window'])) return false;
   if (!isObject(v['origin'])) return false;
+  // destination is optional (null or object)
+  if (v['destination'] !== null && v['destination'] !== undefined && !isObject(v['destination'])) return false;
   if (!Array.isArray(v['stops'])) return false;
   if (!Array.isArray(v['timeline'])) return false;
   if (!Array.isArray(v['droppedStops'])) return false;
@@ -41,5 +43,24 @@ export function isCreateShareResponse(v: unknown): v is CreateShareResponse {
     typeof v['shareId'] === 'string' &&
     typeof v['shareUrl'] === 'string' &&
     typeof v['deletionToken'] === 'string'
+  );
+}
+
+export function isAutocompleteResponse(v: unknown): v is AutocompleteResponse {
+  if (!isObject(v)) return false;
+  if (!Array.isArray(v['predictions'])) return false;
+  return (v['predictions'] as unknown[]).every(
+    (p) => {
+      if (!isObject(p)) return false;
+      const pred = p as Record<string, unknown>;
+      if (typeof pred['placeId'] !== 'string') return false;
+      // Validate optional location shape when present
+      if (pred['location'] !== undefined && pred['location'] !== null) {
+        if (!isObject(pred['location'])) return false;
+        const loc = pred['location'] as Record<string, unknown>;
+        if (typeof loc['latitude'] !== 'number' || typeof loc['longitude'] !== 'number') return false;
+      }
+      return true;
+    },
   );
 }

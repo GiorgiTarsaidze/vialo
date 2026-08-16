@@ -14,3 +14,6 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: () => false,
   }),
 });
+
+// Ensure __vialoMapsAuthFailed is available
+window.__vialoMapsAuthFailed = false;

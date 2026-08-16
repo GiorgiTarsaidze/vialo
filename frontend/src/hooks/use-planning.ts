@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import type { ItineraryResponse } from '../lib/types';
+import type { ItineraryResponse, PlanningPayload } from '../lib/types';
 import { planItinerary, ApiClientError } from '../lib/api-client';
 
 export type PlanningState = 'idle' | 'loading' | 'error' | 'result';
@@ -14,7 +14,7 @@ interface PlanningIdle {
   state: 'idle';
   result: null;
   error: null;
-  submit: (prompt: string) => void;
+  submit: (payload: string | PlanningPayload) => void;
   reset: () => void;
 }
 
@@ -22,7 +22,7 @@ interface PlanningLoading {
   state: 'loading';
   result: null;
   error: null;
-  submit: (prompt: string) => void;
+  submit: (payload: string | PlanningPayload) => void;
   reset: () => void;
 }
 
@@ -30,7 +30,7 @@ interface PlanningErrorState {
   state: 'error';
   result: null;
   error: PlanningError;
-  submit: (prompt: string) => void;
+  submit: (payload: string | PlanningPayload) => void;
   reset: () => void;
 }
 
@@ -38,7 +38,7 @@ interface PlanningResult {
   state: 'result';
   result: ItineraryResponse;
   error: null;
-  submit: (prompt: string) => void;
+  submit: (payload: string | PlanningPayload) => void;
   reset: () => void;
 }
 
@@ -58,7 +58,7 @@ export function usePlanning(): PlanningHook {
     setError(null);
   }, []);
 
-  const submit = useCallback(async (prompt: string) => {
+  const submit = useCallback(async (payload: string | PlanningPayload) => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -68,7 +68,7 @@ export function usePlanning(): PlanningHook {
     setResult(null);
 
     try {
-      const response = await planItinerary(prompt, controller.signal);
+      const response = await planItinerary(payload, controller.signal);
       if (!controller.signal.aborted) {
         setResult(response);
         setState('result');

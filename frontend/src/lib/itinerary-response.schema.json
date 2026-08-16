@@ -115,7 +115,10 @@
         "AI_BUDGET_EXCEEDED",
         "INTERNAL_ERROR",
         "WALKING_ROUTES_BETA",
-        "GROUNDING_EXCLUSION"
+        "GROUNDING_EXCLUSION",
+        "CANDIDATE_REPAIRED",
+        "CANDIDATE_REPAIR_FAILED",
+        "DESTINATION_NOT_FOUND"
       ],
       "title": "DiagnosticCode",
       "type": "string"
@@ -164,6 +167,18 @@
         "location": {
           "$ref": "#/$defs/Location"
         },
+        "photoUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Photourl"
+        },
         "photos": {
           "items": {
             "$ref": "#/$defs/PlacePhoto"
@@ -187,9 +202,33 @@
           "default": null,
           "title": "Primarytype"
         },
+        "rating": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rating"
+        },
         "timeZoneId": {
           "title": "Timezoneid",
           "type": "string"
+        },
+        "userRatingCount": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Userratingcount"
         }
       },
       "required": [
@@ -865,6 +904,17 @@
         }
       ],
       "title": "Comparison"
+    },
+    "destination": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GroundedPlace"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "diagnostics": {
       "items": {

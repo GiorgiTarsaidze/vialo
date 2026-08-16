@@ -93,3 +93,6 @@ class GroundedPlace(ApiModel):
     primary_type: str | None = None
     time_zone_id: str
     photos: list[PlacePhoto] = Field(default_factory=list)
+    rating: float | None = None
+    user_rating_count: int | None = None
+    photo_url: str | None = None  # same-origin /api/photos?... URL for first valid photo

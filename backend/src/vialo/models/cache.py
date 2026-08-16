@@ -26,6 +26,8 @@ class CacheProfile(CacheModel):
     primary_type: str | None = None
     time_zone_id: str
     photos: list[PlacePhoto]
+    rating: float | None = None
+    user_rating_count: int | None = None
     fetched_at: dt.datetime
     expires_at: int  # epoch seconds
 

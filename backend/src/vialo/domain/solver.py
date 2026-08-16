@@ -67,8 +67,12 @@ def _evaluate_permutation(
     window_end_epoch: int,
     return_to_origin: bool,
     origin_index: int,
+    destination_index: int | None = None,
 ) -> SolverObjective | None:
     """Evaluate a permutation using only primitive arithmetic. No Pydantic models.
+
+    When destination_index is set, a final travel leg to that index is mandatory
+    and must arrive before window_end. Destination is NOT a visit stop.
 
     Returns SolverObjective if feasible, None otherwise.
     """
@@ -114,8 +118,18 @@ def _evaluate_permutation(
         current_epoch = visit_end
         prev_matrix_idx = stop_matrix_idx
 
-    # Return to origin if required
-    if return_to_origin:
+    # Final leg: destination or return to origin
+    if destination_index is not None:
+        # Fixed destination (not a visit, just travel there)
+        edge = matrix[prev_matrix_idx][destination_index]
+        if not edge.reachable or edge.duration_seconds is None:
+            return None
+        travel_seconds = edge.duration_seconds
+        current_epoch += travel_seconds
+        if current_epoch > window_end_epoch:
+            return None
+        total_travel += travel_seconds
+    elif return_to_origin:
         edge = matrix[prev_matrix_idx][origin_index]
         if not edge.reachable or edge.duration_seconds is None:
             return None
@@ -167,8 +181,13 @@ def _materialize_timeline(
     window_end: dt.datetime,
     return_to_origin: bool,
     travel_mode: TravelMode,
+    destination_index: int | None = None,
 ) -> FeasibleSchedule | None:
-    """Build the full timeline with Pydantic models for the winning permutation."""
+    """Build the full timeline with Pydantic models for the winning permutation.
+
+    destination_index: if set, adds a final travel leg to that matrix index.
+    The destination is NOT a visit — no stop_index, no visit entry.
+    """
     timeline: list[TravelEntry | WaitEntry | VisitEntry] = []
     current_time = window_start
     total_travel = 0
@@ -253,8 +272,34 @@ def _materialize_timeline(
         current_time = visit_end
         prev_matrix_idx = stop_matrix_idx
 
-    # Return to origin
-    if return_to_origin:
+    # Final leg: destination or return to origin
+    if destination_index is not None:
+        edge = matrix[prev_matrix_idx][destination_index]
+        if not edge.reachable or edge.duration_seconds is None:
+            return None
+        travel_seconds = edge.duration_seconds
+        distance_meters = edge.distance_meters or 0
+        departure = current_time
+        arrival = current_time + dt.timedelta(seconds=travel_seconds)
+
+        if arrival > window_end:
+            return None
+
+        timeline.append(
+            TravelEntry(
+                type="travel",
+                from_index=prev_matrix_idx,
+                to_index=destination_index,
+                mode=travel_mode,
+                duration_seconds=travel_seconds,
+                distance_meters=distance_meters,
+                departure=departure,
+                arrival=arrival,
+            )
+        )
+        total_travel += travel_seconds
+        current_time = arrival
+    elif return_to_origin:
         edge = matrix[prev_matrix_idx][origin_index]
         if not edge.reachable or edge.duration_seconds is None:
             return None
@@ -315,6 +360,7 @@ def solve_exact(
     window_end: dt.datetime,
     return_to_origin: bool,
     travel_mode: TravelMode = "WALK",
+    destination_index: int | None = None,
 ) -> FeasibleSchedule | None:
     """Find the provably optimal stop order via exhaustive permutation search.
 
@@ -329,6 +375,8 @@ def solve_exact(
         window_end: UTC-aware end of the time window.
         return_to_origin: Whether to route back to origin at the end.
         travel_mode: WALK or DRIVE.
+        destination_index: If set, mandatory final travel leg to this matrix index.
+            Overrides return_to_origin. Destination is NOT a visit.
 
     Returns:
         The optimal FeasibleSchedule, or None if no permutation is feasible.
@@ -366,6 +414,7 @@ def solve_exact(
             window_end_epoch=window_end_epoch,
             return_to_origin=return_to_origin,
             origin_index=origin_index,
+            destination_index=destination_index,
         )
         if obj is None:
             continue
@@ -386,4 +435,5 @@ def solve_exact(
         window_end=window_end,
         return_to_origin=return_to_origin,
         travel_mode=travel_mode,
+        destination_index=destination_index,
     )

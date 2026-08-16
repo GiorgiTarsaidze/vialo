@@ -25,10 +25,12 @@ class RateLimiter:
         hmac_secret: str,
         max_requests: int = 5,
         region_name: str = "us-east-1",
+        bucket_prefix: str = "LIMIT",
     ) -> None:
         self._table_name = table_name
         self._hmac_secret = hmac_secret.encode()
         self._max_requests = max_requests
+        self._bucket_prefix = bucket_prefix
         dynamodb = boto3.resource("dynamodb", region_name=region_name)
         self._table = dynamodb.Table(table_name)
 
@@ -58,7 +60,7 @@ class RateLimiter:
         """
         ip_hash = self._hash_ip(client_ip)
         bucket = self._current_bucket()
-        pk = f"LIMIT#{ip_hash}"
+        pk = f"{self._bucket_prefix}#{ip_hash}"
         sk = f"HOUR#{bucket}"
 
         try:

@@ -1,48 +1,25 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { ComparisonResult, GroundedStop, GroundedPlace } from '../lib/types';
 import { decodePolyline } from '../lib/format';
+import {
+  MAPS_AUTH_FAILURE_EVENT,
+  baseMapOptions,
+  loadGoogleMaps,
+} from '../lib/google-maps';
 
 interface ComparisonMapProps {
   comparison: ComparisonResult;
   stops: GroundedStop[];
   origin: GroundedPlace;
+  destination?: GroundedPlace | null;
 }
 
-declare global {
-  interface Window {
-    google?: typeof google;
-    initVialoMap?: () => void;
-  }
-}
-
-function loadGoogleMaps(): Promise<void> {
-  if (window.google?.maps) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector('script[src*="maps.googleapis.com"]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve());
-      return;
-    }
-    const key = import.meta.env.VITE_GOOGLE_MAPS_BROWSER_KEY;
-    if (!key) {
-      reject(new Error('No Google Maps key configured'));
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&callback=initVialoMap`;
-    script.async = true;
-    script.defer = true;
-    window.initVialoMap = () => resolve();
-    script.onerror = () => reject(new Error('Google Maps script failed to load'));
-    document.head.appendChild(script);
-  });
-}
-
-export default function ComparisonMap({ comparison, stops, origin }: ComparisonMapProps) {
+export default function ComparisonMap({ comparison, stops, origin, destination }: ComparisonMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const hasRevealedRef = useRef(false);
   const [mapStatus, setMapStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const authFailedRef = useRef(false);
 
   const prefersReducedMotion =
     typeof window !== 'undefined' &&
@@ -51,6 +28,7 @@ export default function ComparisonMap({ comparison, stops, origin }: ComparisonM
   const drawMap = useCallback(() => {
     if (!mapRef.current || comparison.status === 'unavailable') return;
     if (!window.google?.maps) return;
+    if (authFailedRef.current) return;
 
     const naivePath = decodePolyline(comparison.naivePolyline);
     const optimizedPath = decodePolyline(comparison.optimizedPolyline);
@@ -63,19 +41,15 @@ export default function ComparisonMap({ comparison, stops, origin }: ComparisonM
     optimizedPath.forEach((p) => bounds.extend(p));
     stops.forEach((s) => bounds.extend({ lat: s.place.location.latitude, lng: s.place.location.longitude }));
     bounds.extend({ lat: origin.location.latitude, lng: origin.location.longitude });
+    if (destination) {
+      bounds.extend({ lat: destination.location.latitude, lng: destination.location.longitude });
+    }
 
-    const map = new google.maps.Map(mapRef.current, {
-      mapTypeControl: false,
-      streetViewControl: false,
-      fullscreenControl: false,
-      zoomControl: true,
-      gestureHandling: 'cooperative',
-    });
+    const map = new google.maps.Map(mapRef.current, baseMapOptions());
     map.fitBounds(bounds, { top: 40, bottom: 40, left: 20, right: 20 });
     mapInstanceRef.current = map;
 
     if (isSameOrder) {
-      // Single shared line
       new google.maps.Polyline({
         path: optimizedPath,
         strokeColor: '#6f3e59',
@@ -84,11 +58,9 @@ export default function ComparisonMap({ comparison, stops, origin }: ComparisonM
         map,
       });
     } else if (prefersReducedMotion || hasRevealedRef.current) {
-      // Show both routes immediately
       drawNaiveLine(map, naivePath);
       drawOptimizedLine(map, optimizedPath);
     } else {
-      // Animated reveal
       hasRevealedRef.current = true;
       const naiveLine = drawNaiveLine(map, naivePath);
       const optLine = drawOptimizedLine(map, optimizedPath);
@@ -125,63 +97,139 @@ export default function ComparisonMap({ comparison, stops, origin }: ComparisonM
       });
     });
 
-    // Origin marker
+    // Origin/start marker
+    const sameStartEnd =
+      destination &&
+      origin.placeId === destination.placeId;
+
     new google.maps.Marker({
       position: { lat: origin.location.latitude, lng: origin.location.longitude },
       map,
-      label: { text: '●', color: '#2b2326', fontSize: '10px' },
+      label: {
+        text: sameStartEnd ? 'S/E' : 'S',
+        color: '#2b2326',
+        fontSize: '10px',
+        fontWeight: '600',
+      },
       icon: {
         path: google.maps.SymbolPath.CIRCLE,
-        scale: 10,
+        scale: 11,
         fillColor: '#ffffff',
         fillOpacity: 1,
         strokeColor: '#2b2326',
         strokeWeight: 2,
       },
-      title: `Origin: ${origin.displayName}`,
+      title: sameStartEnd
+        ? `Start & End: ${origin.displayName}`
+        : `Start: ${origin.displayName}`,
     });
-  }, [comparison, stops, origin, prefersReducedMotion]);
+
+    // Destination marker (distinct from start)
+    if (destination && !sameStartEnd) {
+      new google.maps.Marker({
+        position: { lat: destination.location.latitude, lng: destination.location.longitude },
+        map,
+        label: { text: 'E', color: '#ffffff', fontSize: '10px', fontWeight: '600' },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 11,
+          fillColor: '#6f3e59',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+        },
+        title: `End: ${destination.displayName}`,
+      });
+    }
+  }, [comparison, stops, origin, destination, prefersReducedMotion]);
 
   useEffect(() => {
     if (comparison.status === 'unavailable') return;
+
+    const handleAuthFailure = () => {
+      authFailedRef.current = true;
+      if (mapRef.current) mapRef.current.replaceChildren();
+      setMapStatus('unavailable');
+    };
+    window.addEventListener(MAPS_AUTH_FAILURE_EVENT, handleAuthFailure);
+
     setMapStatus('loading');
     loadGoogleMaps()
       .then(() => {
+        if (authFailedRef.current) {
+          setMapStatus('unavailable');
+          return;
+        }
         drawMap();
         setMapStatus('ready');
       })
       .catch(() => {
         setMapStatus('unavailable');
       });
+
+    return () => {
+      window.removeEventListener(MAPS_AUTH_FAILURE_EVENT, handleAuthFailure);
+    };
   }, [comparison, drawMap]);
 
   if (comparison.status === 'unavailable') {
     return null;
   }
 
-  // Text fallback
   const isSameOrder = comparison.outcome === 'same_order';
+  const destinationLabel = destination
+    ? ` ending at ${destination.displayName}`
+    : '';
   const textFallback = isSameOrder
-    ? `Map: single optimized route with ${stops.length} numbered stops`
-    : `Map: naive route (coral dashed) and optimized route (plum solid) with ${stops.length} numbered stops`;
+    ? `Map: single optimized route with ${stops.length} numbered stops${destinationLabel}`
+    : `Map: naive route (coral dashed) and optimized route (plum solid) with ${stops.length} numbered stops${destinationLabel}`;
 
   return (
     <div className="comparison-map-container">
-      <div
-        ref={mapRef}
-        className="comparison-map"
-        role="img"
-        aria-label={textFallback}
-        aria-busy={mapStatus === 'loading'}
-      />
+      {mapStatus !== 'unavailable' && (
+        <div
+          ref={mapRef}
+          className="comparison-map"
+          role="img"
+          aria-label={textFallback}
+          aria-busy={mapStatus === 'loading'}
+        />
+      )}
       {mapStatus === 'loading' && (
         <p className="map-status" role="status">Loading route map…</p>
       )}
       {mapStatus === 'unavailable' && (
-        <p className="map-status map-status--unavailable">
-          Interactive map unavailable. The verified route summary and schedule remain below.
-        </p>
+        <div className="map-fallback">
+          <p className="map-status map-status--unavailable">
+            Interactive map unavailable. The verified route summary and schedule remain below.
+          </p>
+        </div>
       )}
+
+      {/* Outside legend */}
+      {mapStatus === 'ready' && !isSameOrder && (
+        <div className="map-legend" aria-label="Route legend">
+          <span className="legend-item">
+            <span className="legend-line legend-line--naive" aria-hidden="true" />
+            <span className="legend-text">Naive order</span>
+          </span>
+          <span className="legend-item">
+            <span className="legend-line legend-line--optimized" aria-hidden="true" />
+            <span className="legend-text">Vialo order</span>
+          </span>
+          <span className="legend-item">
+            <span className="legend-marker legend-marker--start" aria-hidden="true">S</span>
+            <span className="legend-text">Start</span>
+          </span>
+          {destination && origin.placeId !== destination.placeId && (
+            <span className="legend-item">
+              <span className="legend-marker legend-marker--end" aria-hidden="true">E</span>
+              <span className="legend-text">End</span>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Accessible text alternative */}
       <div className="sr-only">
         {textFallback}. Stop order:{' '}
@@ -225,7 +273,7 @@ function drawOptimizedLine(map: google.maps.Map, path: Array<{ lat: number; lng:
 const styles = `
 .comparison-map-container {
   position: relative;
-  margin-bottom: var(--space-5);
+  overflow: hidden;
 }
 
 .map-status {
@@ -242,23 +290,103 @@ const styles = `
   pointer-events: none;
 }
 
+.map-fallback {
+  position: relative;
+}
+
 .map-status--unavailable {
+  position: relative;
   color: var(--color-ink);
   background: var(--color-accent-lilac);
+  padding: var(--space-5);
+  border-radius: var(--radius-card);
+  pointer-events: auto;
 }
 
 .comparison-map {
   width: 100%;
   min-height: 280px;
-  height: 340px;
+  height: 300px;
   border-radius: var(--radius-card);
   border: 1px solid var(--color-border);
   background: var(--color-map-land);
+  overflow: hidden;
 }
 
 @media (min-width: 768px) {
   .comparison-map {
-    height: 400px;
+    height: 380px;
   }
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  margin-top: var(--space-2);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.legend-line {
+  width: 24px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-line--naive {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--color-naive) 0px,
+    var(--color-naive) 8px,
+    transparent 8px,
+    transparent 14px
+  );
+  opacity: 0.7;
+}
+
+.legend-line--optimized {
+  background: var(--color-optimized);
+  height: 4px;
+}
+
+.legend-marker--start {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--color-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--color-ink);
+  flex-shrink: 0;
+}
+
+.legend-marker--end {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 600;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.legend-text {
+  font-size: 12px;
+  color: var(--color-ink-muted);
+  font-weight: 500;
 }
 `;

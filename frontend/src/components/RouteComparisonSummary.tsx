@@ -99,7 +99,7 @@ export default function RouteComparisonSummary({ comparison, travelMode }: Route
 
 const styles = `
 .comparison-summary {
-  margin-bottom: var(--space-5);
+  overflow-wrap: anywhere;
 }
 
 .comparison-headline {
@@ -107,7 +107,7 @@ const styles = `
   line-height: 28px;
   font-weight: 600;
   color: var(--color-ink);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
 .comparison-unavailable .comparison-note {
@@ -122,7 +122,7 @@ const styles = `
   padding: var(--space-4);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-input);
 }
 
 @media (min-width: 640px) {
@@ -139,7 +139,7 @@ const styles = `
 }
 
 .route-stroke {
-  width: 32px;
+  width: 24px;
   height: 3px;
   margin-top: 10px;
   flex-shrink: 0;
@@ -152,16 +152,16 @@ const styles = `
   background-image: repeating-linear-gradient(
     90deg,
     var(--color-naive) 0px,
-    var(--color-naive) 12px,
-    transparent 12px,
-    transparent 20px
+    var(--color-naive) 8px,
+    transparent 8px,
+    transparent 14px
   );
   background-color: transparent;
 }
 
 .route-stroke--optimized {
   background: var(--color-optimized);
-  height: 5px;
+  height: 4px;
   margin-top: 9px;
 }
 

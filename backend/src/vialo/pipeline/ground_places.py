@@ -58,44 +58,59 @@ def _select_unambiguous_result(
     """Prefer exact/local results and reject close competing matches."""
     query_norm = _normalized_text(query)
     locality_tokens = {token for token in _normalized_text(locality).split() if len(token) >= 3}
-    # A user or selector may qualify an origin as "Place, Locality". The
-    # locality belongs in address matching, not canonical place-name scoring.
+
+    def token_keys(value: str) -> set[str]:
+        """Normalize simple English plurals for venue-name comparison."""
+        keys: set[str] = set()
+        for token in _normalized_text(value).split():
+            keys.add(token[:-1] if len(token) > 3 and token.endswith("s") else token)
+        return keys
+
+    # A user or selector may qualify an origin with locality/address context.
+    # Score how fully each canonical result name is represented in the query,
+    # independently of extra query tokens such as street or square names.
     name_query_parts = [token for token in query_norm.split() if token not in locality_tokens]
     name_query_norm = " ".join(name_query_parts) or query_norm
-    query_tokens = set(name_query_parts) or set(query_norm.split())
-    ranked: list[tuple[tuple[int, int, float, float], PlacesSearchResult]] = []
+    query_tokens = token_keys(name_query_norm)
+    ranked: list[tuple[tuple[int, int, float, float, float], PlacesSearchResult]] = []
 
     for result in results:
         if not result.place_id or not result.display_name:
             continue
         name_norm = _normalized_text(result.display_name)
-        name_tokens = set(name_norm.split())
+        name_tokens = token_keys(name_norm) - token_keys(locality)
+        address_tokens = token_keys(result.formatted_address)
         exact = int(name_norm == name_query_norm)
-        locality_match = int(
-            bool(locality_tokens & set(_normalized_text(result.formatted_address).split()))
-        )
-        token_coverage = (
-            len(query_tokens & name_tokens) / len(query_tokens) if query_tokens else 0.0
-        )
+        locality_match = int(bool(token_keys(locality) & address_tokens))
+        overlap = query_tokens & name_tokens
+        result_name_coverage = len(overlap) / len(name_tokens) if name_tokens else 0.0
+        token_coverage = len(overlap) / len(query_tokens) if query_tokens else 0.0
         similarity = SequenceMatcher(None, name_query_norm, name_norm).ratio()
-        ranked.append(((exact, locality_match, token_coverage, similarity), result))
+        ranked.append(
+            (
+                (exact, locality_match, result_name_coverage, token_coverage, similarity),
+                result,
+            )
+        )
 
     if not ranked:
         return None
     ranked.sort(key=lambda item: item[0], reverse=True)
     top_score, top = ranked[0]
-    exact, locality_match, token_coverage, similarity = top_score
-    strong_name = bool(exact or token_coverage >= 0.75 or similarity >= 0.78)
+    exact, locality_match, result_name_coverage, token_coverage, similarity = top_score
+    strong_name = bool(
+        exact or result_name_coverage >= 0.75 or token_coverage >= 0.75 or similarity >= 0.78
+    )
     if not strong_name:
         return None
 
     if len(ranked) > 1:
         second_score, _ = ranked[1]
-        # Equal-quality top matches are ambiguous. A locality match or a clear name
-        # score lead is required for a non-exact fuzzy resolution.
         if top_score == second_score:
             return None
-        clear_lead = (token_coverage + similarity) - (second_score[2] + second_score[3]) >= 0.10
+        clear_lead = (result_name_coverage + token_coverage + similarity) - (
+            second_score[2] + second_score[3] + second_score[4]
+        ) >= 0.10
         if not exact and not locality_match and not clear_lead:
             return None
 
@@ -128,6 +143,8 @@ def _result_to_grounded_place(result: PlacesSearchResult) -> GroundedPlace:
         primary_type=result.primary_type,
         time_zone_id=result.time_zone_id or "",
         photos=photos,
+        rating=result.rating,
+        user_rating_count=result.user_rating_count,
     )
 
 
@@ -140,6 +157,8 @@ def _profile_to_place(profile: CacheProfile) -> GroundedPlace:
         primary_type=profile.primary_type,
         time_zone_id=profile.time_zone_id,
         photos=profile.photos,
+        rating=profile.rating,
+        user_rating_count=profile.user_rating_count,
     )
 
 
@@ -152,6 +171,8 @@ def _place_to_cache_profile(place: GroundedPlace, now: dt.datetime) -> CacheProf
         primary_type=place.primary_type,
         time_zone_id=place.time_zone_id,
         photos=place.photos,
+        rating=place.rating,
+        user_rating_count=place.user_rating_count,
         fetched_at=now,
         expires_at=int(now.timestamp()) + PROFILE_TTL_SECONDS,
     )

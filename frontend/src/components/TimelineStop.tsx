@@ -18,6 +18,12 @@ export default function TimelineStopRow({ entry, stop, sequence }: TimelineStopP
   const openingTime = stop?.openIntervals?.[0]?.localStart.slice(0, 5);
   const openAnnotation = openingTime === arrivalTime ? `Opens ${openingTime}` : null;
 
+  // Evidence: rating and review count
+  const rating = stop?.place.rating ?? null;
+  const reviewCount = stop?.place.userRatingCount ?? null;
+  const photoUrl = stop?.place.photoUrl ?? null;
+  const photoAttribution = stop?.place.photos?.[0]?.authorAttributions?.[0] ?? null;
+
   return (
     <li className="timeline-stop" aria-label={`Stop ${sequence}: ${name}, arrive ${arrivalTime}, depart ${departureTime}, ${durationLabel}`}>
       <div className="stop-time tabular-nums">
@@ -33,6 +39,19 @@ export default function TimelineStopRow({ entry, stop, sequence }: TimelineStopP
         <span className="stop-duration">
           {durationLabel} · <span className="stop-provenance">{provenanceLabel}</span>
         </span>
+
+        {/* Evidence: rating + review count */}
+        {rating !== null && (
+          <span className="stop-evidence">
+            <span className="stop-rating" aria-label={`Rating ${rating.toFixed(1)} out of 5`}>
+              ★ {rating.toFixed(1)}
+            </span>
+            {reviewCount !== null && reviewCount > 0 && (
+              <span className="stop-reviews">({reviewCount.toLocaleString()} reviews)</span>
+            )}
+          </span>
+        )}
+
         {openAnnotation && (
           <span className="stop-annotation">
             <span aria-hidden="true">🕐</span> {openAnnotation}
@@ -40,20 +59,44 @@ export default function TimelineStopRow({ entry, stop, sequence }: TimelineStopP
         )}
         {address && <span className="stop-address">{address}</span>}
 
-        {/* Photo with attributions */}
-        {stop?.place.photos?.[0] && (
-          <div className="stop-photo-credit">
-            {stop.place.photos[0].authorAttributions.map((attr, i) => (
+        {/* Place photo with attribution — uses CSS to hide broken images */}
+        {photoUrl && (
+          <div className="stop-photo-wrap">
+            <img
+              src={photoUrl}
+              alt={`Photo of ${name}`}
+              className="stop-photo"
+              loading="lazy"
+              decoding="async"
+              onError={(e) => {
+                // Hide the broken image entirely via inline style
+                (e.currentTarget as HTMLImageElement).style.display = 'none';
+              }}
+            />
+            {photoAttribution && (
               <a
-                key={i}
-                href={attr.uri}
+                href={photoAttribution.uri}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="photo-attribution"
               >
-                Photo: {attr.displayName}
+                Photo: {photoAttribution.displayName}
               </a>
-            ))}
+            )}
+          </div>
+        )}
+
+        {/* Fallback photo credit without image */}
+        {!photoUrl && stop?.place.photos?.[0]?.authorAttributions?.[0] && (
+          <div className="stop-photo-credit">
+            <a
+              href={stop.place.photos[0].authorAttributions[0].uri}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="photo-attribution"
+            >
+              Photo: {stop.place.photos[0].authorAttributions[0].displayName}
+            </a>
           </div>
         )}
       </div>
@@ -125,6 +168,8 @@ const styles = `
   gap: 2px;
   padding-left: var(--space-2);
   padding-top: 4px;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .stop-name {
@@ -142,6 +187,23 @@ const styles = `
   font-style: italic;
 }
 
+.stop-evidence {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--color-ink-muted);
+}
+
+.stop-rating {
+  color: var(--color-accent-sun);
+  font-weight: 600;
+}
+
+.stop-reviews {
+  font-size: 12px;
+}
+
 .stop-annotation {
   font-size: 12px;
   color: var(--color-warning);
@@ -153,12 +215,31 @@ const styles = `
   color: var(--color-ink-muted);
 }
 
+.stop-photo-wrap {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.stop-photo {
+  width: 100%;
+  max-width: 200px;
+  height: auto;
+  max-height: 120px;
+  object-fit: cover;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--color-border);
+}
+
 .stop-photo-credit {
   margin-top: var(--space-1);
 }
 
 .photo-attribution {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--color-ink-muted);
+  min-height: 12px;
+  line-height: 16px;
 }
 `;
