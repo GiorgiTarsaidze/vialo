@@ -38,6 +38,104 @@ interface InputHeroProps {
   error?: PlanningError | null;
 }
 
+/** Animated postcard/route SVG composition for the hero background */
+function HeroPostcard() {
+  return (
+    <div className="hero-postcard" aria-hidden="true">
+      <svg
+        className="postcard-svg"
+        viewBox="0 0 360 180"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        role="presentation"
+      >
+        {/* Skyline silhouette shapes */}
+        <rect className="postcard-building postcard-building--1" x="20" y="90" width="28" height="70" rx="3" fill="var(--color-primary-soft)" />
+        <rect className="postcard-building postcard-building--2" x="55" y="70" width="22" height="90" rx="3" fill="var(--color-accent-lilac)" />
+        <rect className="postcard-building postcard-building--3" x="84" y="80" width="30" height="80" rx="3" fill="var(--color-accent-blush)" />
+        <rect className="postcard-building postcard-building--4" x="280" y="75" width="26" height="85" rx="3" fill="var(--color-primary-soft)" />
+        <rect className="postcard-building postcard-building--5" x="312" y="85" width="30" height="75" rx="3" fill="var(--color-accent-lilac)" />
+
+        {/* Church/landmark dome */}
+        <path className="postcard-building postcard-building--2" d="M65 70 Q66 55 76 55 Q86 55 87 70" fill="var(--color-accent-lilac)" />
+
+        {/* Ground plane */}
+        <rect x="0" y="160" width="360" height="20" fill="var(--color-border)" opacity="0.4" />
+
+        {/* Route path (animated) */}
+        <path
+          className="postcard-route"
+          d="M 30 155 C 60 140 100 148 140 145 S 200 135 240 140 S 300 148 340 152"
+          stroke="var(--color-primary)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          fill="none"
+        />
+
+        {/* Stop markers along route */}
+        <circle className="postcard-stop postcard-stop--1" cx="70" cy="148" r="5" fill="var(--color-primary)" />
+        <circle className="postcard-stop postcard-stop--2" cx="155" cy="143" r="5" fill="var(--color-primary)" />
+        <circle className="postcard-stop postcard-stop--3" cx="250" cy="139" r="5" fill="var(--color-primary)" />
+        <circle className="postcard-stop postcard-stop--4" cx="330" cy="151" r="5" fill="var(--color-primary)" />
+
+        {/* Origin marker */}
+        <circle cx="30" cy="155" r="7" fill="var(--color-ink)" stroke="#fff" strokeWidth="2" />
+        <text x="30" y="159" textAnchor="middle" fontSize="8" fontWeight="700" fill="#fff">S</text>
+
+        {/* Progress dot that moves along the path */}
+        <circle className="postcard-progress" cx="0" cy="0" r="4" fill="var(--color-accent-sun)">
+          <animateMotion
+            className="postcard-motion"
+            dur="3s"
+            repeatCount="1"
+            fill="freeze"
+            path="M 30 155 C 60 140 100 148 140 145 S 200 135 240 140 S 300 148 340 152"
+          />
+        </circle>
+      </svg>
+
+      {/* Floating "postcard" cards */}
+      <div className="postcard-card postcard-card--1">
+        <span className="postcard-card-time">09:40</span>
+        <span className="postcard-card-dot" />
+        <span className="postcard-card-name">Basilica</span>
+      </div>
+      <div className="postcard-card postcard-card--2">
+        <span className="postcard-card-time">11:20</span>
+        <span className="postcard-card-dot" />
+        <span className="postcard-card-name">Palazzo</span>
+      </div>
+    </div>
+  );
+}
+
+/** Accessible switch for "End where I started" */
+function ReturnSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-labelledby="return-switch-text"
+      className={`return-switch-row ${checked ? 'return-switch-row--on' : ''}`}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="return-switch-track" aria-hidden="true">
+        <span className="return-switch-thumb" />
+      </span>
+      <span className="return-switch-label" id="return-switch-text">
+        End where I started
+      </span>
+    </button>
+  );
+}
+
 export default function InputHero({ onSubmit, loading, error }: InputHeroProps) {
   const [mode, setMode] = useState<InputMode>('free');
   const [value, setValue] = useState('');
@@ -117,183 +215,175 @@ export default function InputHero({ onSubmit, loading, error }: InputHeroProps) 
 
   return (
     <section className="input-hero" aria-labelledby="hero-heading">
-      <img
-        src="/logo-hero.png"
-        alt=""
-        className="hero-logo"
-        width="64"
-        height="64"
-      />
-      <h1 id="hero-heading" className="hero-headline">
-        Describe your day.
-        <br />
-        Get one that actually fits.
-      </h1>
-      <p className="hero-subtitle">
-        Verified stops, real hours, and the shortest feasible order.
-      </p>
+      <HeroPostcard />
 
-      {/* Mode toggle */}
-      <div className="mode-toggle" role="tablist" aria-label="Input mode">
-        <button
-          role="tab"
-          aria-selected={mode === 'free'}
-          aria-controls="panel-free"
-          className={`mode-tab ${mode === 'free' ? 'mode-tab--active' : ''}`}
-          onClick={() => setMode('free')}
-          type="button"
-        >
-          Describe freely
-        </button>
-        <button
-          role="tab"
-          aria-selected={mode === 'structured'}
-          aria-controls="panel-structured"
-          className={`mode-tab ${mode === 'structured' ? 'mode-tab--active' : ''}`}
-          onClick={() => setMode('structured')}
-          type="button"
-        >
-          Choose details
-        </button>
-      </div>
+      <div className="hero-content">
+        <h1 id="hero-heading" className="hero-headline">
+          Describe your day.
+          <br />
+          Get one that actually fits.
+        </h1>
+        <p className="hero-subtitle">
+          Verified stops, real hours, and the shortest feasible order.
+        </p>
 
-      <form
-        className="prompt-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleSubmit();
-        }}
-        aria-label="Plan your day"
-      >
-        {/* Free mode panel */}
-        {mode === 'free' && (
-          <div id="panel-free" role="tabpanel" aria-labelledby="hero-heading">
-            <div className="textarea-wrapper">
-              <textarea
-                ref={textareaRef}
-                className={`prompt-input ${isOverLimit ? 'prompt-input--error' : ''}`}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Venice, 09:00–17:00, architecture and quiet streets, on foot"
-                rows={3}
-                aria-label="Describe your day"
-                aria-describedby="char-count privacy-note"
-                aria-invalid={isOverLimit || undefined}
-              />
-              <span
-                id="char-count"
-                className={`char-count ${isOverLimit ? 'char-count--error' : ''}`}
-                aria-live="polite"
-              >
-                {charCount} / {MAX_CHARS}
-              </span>
+        {/* Mode toggle */}
+        <div className="mode-toggle" role="tablist" aria-label="Input mode">
+          <button
+            role="tab"
+            aria-selected={mode === 'free'}
+            aria-controls="panel-free"
+            className={`mode-tab ${mode === 'free' ? 'mode-tab--active' : ''}`}
+            onClick={() => setMode('free')}
+            type="button"
+          >
+            Describe freely
+          </button>
+          <button
+            role="tab"
+            aria-selected={mode === 'structured'}
+            aria-controls="panel-structured"
+            className={`mode-tab ${mode === 'structured' ? 'mode-tab--active' : ''}`}
+            onClick={() => setMode('structured')}
+            type="button"
+          >
+            Choose details
+          </button>
+        </div>
+
+        <form
+          className="prompt-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSubmit();
+          }}
+          aria-label="Plan your day"
+        >
+          {/* Free mode panel */}
+          {mode === 'free' && (
+            <div id="panel-free" role="tabpanel" aria-labelledby="hero-heading">
+              <div className="textarea-wrapper">
+                <textarea
+                  ref={textareaRef}
+                  className={`prompt-input ${isOverLimit ? 'prompt-input--error' : ''}`}
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Venice, 09:00–17:00, architecture and quiet streets, on foot"
+                  rows={3}
+                  aria-label="Describe your day"
+                  aria-describedby="char-count privacy-note"
+                  aria-invalid={isOverLimit || undefined}
+                />
+                <span
+                  id="char-count"
+                  className={`char-count ${isOverLimit ? 'char-count--error' : ''}`}
+                  aria-live="polite"
+                >
+                  {charCount} / {MAX_CHARS}
+                </span>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Structured mode panel */}
-        {mode === 'structured' && (
-          <div id="panel-structured" role="tabpanel" className="structured-panel">
-            <PlaceAutocomplete
-              autocomplete={originAutocomplete}
-              label="Start location"
-              placeholder="Search for your starting point…"
-              required
-            />
+          {/* Structured mode panel */}
+          {mode === 'structured' && (
+            <div id="panel-structured" role="tabpanel" className="structured-panel">
+              <PlaceAutocomplete
+                autocomplete={originAutocomplete}
+                label="Start location"
+                placeholder="Search for your starting point…"
+                required
+              />
 
-            <div className="destination-section">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
+              <div className="destination-section">
+                <ReturnSwitch
                   checked={returnToStart}
-                  onChange={(e) => setReturnToStart(e.target.checked)}
-                  className="checkbox-input"
+                  onChange={setReturnToStart}
                 />
-                <span className="checkbox-text">End where I started</span>
-              </label>
 
-              {!returnToStart && (
-                <PlaceAutocomplete
-                  autocomplete={destinationAutocomplete}
-                  label="End location"
-                  placeholder="Search for your ending point…"
-                  required
+                {!returnToStart && (
+                  <PlaceAutocomplete
+                    autocomplete={destinationAutocomplete}
+                    label="End location"
+                    placeholder="Search for your ending point…"
+                    required
+                  />
+                )}
+              </div>
+
+              <SelectionMap
+                origin={originAutocomplete.selectedPlace}
+                destination={!returnToStart ? destinationAutocomplete.selectedPlace : null}
+              />
+
+              <div className="textarea-wrapper">
+                <textarea
+                  ref={structuredTextareaRef}
+                  className={`prompt-input ${isStructuredOverLimit ? 'prompt-input--error' : ''}`}
+                  value={structuredPrompt}
+                  onChange={(e) => setStructuredPrompt(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="09:00–17:00, architecture and quiet streets, on foot"
+                  rows={2}
+                  aria-label="Date, time, and interests"
+                  aria-describedby="structured-char-count privacy-note"
+                  aria-invalid={isStructuredOverLimit || undefined}
                 />
+                <span
+                  id="structured-char-count"
+                  className={`char-count ${isStructuredOverLimit ? 'char-count--error' : ''}`}
+                  aria-live="polite"
+                >
+                  {structuredCharCount} / {MAX_CHARS}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="input-error" role="alert">
+              {error.message}
+              {retryRemainingMs > 0 && (
+                <span className="retry-countdown">
+                  {' '}Retry available in {formatRetryTime(retryRemainingMs)}.
+                </span>
               )}
             </div>
+          )}
 
-            <SelectionMap
-              origin={originAutocomplete.selectedPlace}
-              destination={!returnToStart ? destinationAutocomplete.selectedPlace : null}
-            />
+          <button
+            type="submit"
+            className="submit-button"
+            disabled={!canSubmit}
+          >
+            Build my day
+          </button>
+        </form>
 
-            <div className="textarea-wrapper">
-              <textarea
-                ref={structuredTextareaRef}
-                className={`prompt-input ${isStructuredOverLimit ? 'prompt-input--error' : ''}`}
-                value={structuredPrompt}
-                onChange={(e) => setStructuredPrompt(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="09:00–17:00, architecture and quiet streets, on foot"
-                rows={2}
-                aria-label="Date, time, and interests"
-                aria-describedby="structured-char-count privacy-note"
-                aria-invalid={isStructuredOverLimit || undefined}
-              />
-              <span
-                id="structured-char-count"
-                className={`char-count ${isStructuredOverLimit ? 'char-count--error' : ''}`}
-                aria-live="polite"
-              >
-                {structuredCharCount} / {MAX_CHARS}
-              </span>
+        {mode === 'free' && (
+          <div className="examples-section">
+            <span className="examples-label">Try an example</span>
+            <div className="examples-row" role="group" aria-label="Example requests">
+              {EXAMPLES.map((ex) => (
+                <button
+                  key={ex.label}
+                  className="example-button"
+                  type="button"
+                  onClick={() => handleExampleClick(ex.text)}
+                >
+                  {ex.label}
+                </button>
+              ))}
             </div>
           </div>
         )}
 
-        {error && (
-          <div className="input-error" role="alert">
-            {error.message}
-            {retryRemainingMs > 0 && (
-              <span className="retry-countdown">
-                {' '}Retry available in {formatRetryTime(retryRemainingMs)}.
-              </span>
-            )}
-          </div>
-        )}
-
-        <button
-          type="submit"
-          className="submit-button"
-          disabled={!canSubmit}
-        >
-          Build my day
-        </button>
-      </form>
-
-      {mode === 'free' && (
-        <div className="examples-section">
-          <span className="examples-label">Try an example</span>
-          <div className="examples-row" role="group" aria-label="Example requests">
-            {EXAMPLES.map((ex) => (
-              <button
-                key={ex.label}
-                className="example-button"
-                type="button"
-                onClick={() => handleExampleClick(ex.text)}
-              >
-                {ex.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <p id="privacy-note" className="privacy-note">
-        Do not enter sensitive personal information.{' '}
-        <a href="/privacy">Privacy policy</a>.
-      </p>
+        <p id="privacy-note" className="privacy-note">
+          Do not enter sensitive personal information.{' '}
+          <a href="/privacy">Privacy policy</a>.
+        </p>
+      </div>
 
       <style>{styles}</style>
     </section>
@@ -306,23 +396,144 @@ const styles = `
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding-top: var(--space-7);
   max-width: 640px;
   margin: 0 auto;
+  position: relative;
 }
 
-.hero-logo {
-  width: 56px;
-  height: 56px;
-  margin-bottom: var(--space-4);
-  border-radius: 12px;
+/* Postcard animation */
+.hero-postcard {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: var(--space-5);
+  overflow: hidden;
 }
 
-@media (min-width: 640px) {
-  .hero-logo {
-    width: 64px;
-    height: 64px;
+.postcard-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Building entrance animations */
+.postcard-building {
+  opacity: 0;
+  transform: translateY(20px);
+  animation: postcard-enter 0.6s ease-out forwards;
+}
+.postcard-building--1 { animation-delay: 0.1s; }
+.postcard-building--2 { animation-delay: 0.2s; }
+.postcard-building--3 { animation-delay: 0.3s; }
+.postcard-building--4 { animation-delay: 0.15s; }
+.postcard-building--5 { animation-delay: 0.25s; }
+
+/* Stop marker entrance */
+.postcard-stop {
+  opacity: 0;
+  transform: scale(0);
+  animation: postcard-pop 0.3s ease-out forwards;
+}
+.postcard-stop--1 { animation-delay: 0.8s; }
+.postcard-stop--2 { animation-delay: 1.0s; }
+.postcard-stop--3 { animation-delay: 1.2s; }
+.postcard-stop--4 { animation-delay: 1.4s; }
+
+/* Route line draw */
+.postcard-route {
+  stroke-dasharray: 400;
+  stroke-dashoffset: 400;
+  animation: postcard-draw 1.5s ease-out 0.5s forwards;
+}
+
+/* Progress dot — settles at end */
+.postcard-progress {
+  opacity: 0;
+  animation: postcard-fade-in 0.3s ease-out 1s forwards;
+}
+
+/* Floating schedule cards */
+.postcard-card {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-ink);
+  box-shadow: 0 2px 8px rgb(43 35 38 / 0.06);
+  opacity: 0;
+  transform: translateY(8px);
+  animation: postcard-card-enter 0.4s ease-out forwards;
+}
+.postcard-card--1 {
+  top: 18%;
+  left: 8%;
+  animation-delay: 1.2s;
+}
+.postcard-card--2 {
+  top: 24%;
+  right: 6%;
+  animation-delay: 1.5s;
+}
+.postcard-card-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+.postcard-card-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  flex-shrink: 0;
+}
+.postcard-card-name {
+  color: var(--color-ink-muted);
+}
+
+@keyframes postcard-enter {
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes postcard-pop {
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes postcard-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes postcard-fade-in {
+  to { opacity: 1; }
+}
+@keyframes postcard-card-enter {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Reduced motion: show final state immediately, no perpetual motion */
+@media (prefers-reduced-motion: reduce) {
+  .postcard-building,
+  .postcard-stop,
+  .postcard-route,
+  .postcard-progress,
+  .postcard-card {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+    stroke-dashoffset: 0;
   }
+  .postcard-motion {
+    display: none;
+  }
+}
+
+.hero-content {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .hero-headline {
@@ -398,22 +609,55 @@ const styles = `
   gap: var(--space-3);
 }
 
-.checkbox-label {
+/* Accessible switch control */
+.return-switch-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  cursor: pointer;
+  gap: var(--space-3);
   min-height: 44px;
-}
-
-.checkbox-input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--color-primary);
+  width: max-content;
+  padding: 0;
+  color: var(--color-ink);
   cursor: pointer;
 }
 
-.checkbox-text {
+.return-switch-row:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-input);
+}
+
+.return-switch-track {
+  position: relative;
+  width: 48px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-strong);
+  transition: background var(--duration-fast) ease;
+}
+
+.return-switch-row--on .return-switch-track {
+  background: var(--color-primary);
+}
+
+.return-switch-thumb {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(43 35 38 / 0.15);
+  transition: transform var(--duration-fast) ease;
+}
+
+.return-switch-row--on .return-switch-thumb {
+  transform: translateX(20px);
+}
+
+.return-switch-label {
   font-size: 14px;
   font-weight: 500;
   color: var(--color-ink);

@@ -157,7 +157,7 @@ class TestGroundPlacesHoursExclusion:
 
     @time_machine.travel(dt.datetime(2026, 8, 15, 12, tzinfo=dt.UTC), tick=False)
     def test_stop_with_no_hours_excluded(self) -> None:
-        """A stop with no opening hours data is excluded, NEVER synthesizes 00:00-24:00."""
+        """A stop with no opening hours and no window_start/end is excluded (legacy behavior)."""
         client = MagicMock()
         client.search_text.return_value = [
             _make_search_result(
@@ -186,10 +186,52 @@ class TestGroundPlacesHoursExclusion:
         assert len(stops) == 0
         assert len(diagnostics) == 1
         assert diagnostics[0].code == DiagnosticCode.HOURS_UNAVAILABLE
-        # Verify no synthesized interval exists
-        for s in stops:
-            for iv in s.open_intervals:
-                assert iv.local_start != "00:00" or iv.local_end != "24:00"
+
+    @time_machine.travel(dt.datetime(2026, 8, 15, 12, tzinfo=dt.UTC), tick=False)
+    def test_stop_with_no_hours_retained_with_window(self) -> None:
+        """A stop with no hours is retained with unverified source when window is provided."""
+        from zoneinfo import ZoneInfo
+
+        client = MagicMock()
+        client.search_text.return_value = [
+            _make_search_result(
+                display_name="Mystery Place", current_hours=None, regular_hours=None
+            )
+        ]
+
+        candidates = [
+            CandidateStop(
+                candidate_index=0,
+                name="Mystery Place",
+                category=StopCategory.LANDMARK,
+                priority=1,
+                visit_duration_minutes=60,
+                duration_source="model_estimate",
+            )
+        ]
+
+        tz = ZoneInfo("Europe/Rome")
+        window_start = dt.datetime(2026, 8, 15, 9, 0, tzinfo=tz)
+        window_end = dt.datetime(2026, 8, 15, 17, 0, tzinfo=tz)
+
+        stops, diagnostics = ground_places(
+            candidates=candidates,
+            locality="Venice",
+            client=client,
+            requested_date=dt.date(2026, 8, 15),
+            window_start=window_start,
+            window_end=window_end,
+        )
+
+        assert len(stops) == 1
+        assert len(diagnostics) == 0
+        assert stops[0].hours_source == "unverified"
+        assert len(stops[0].open_intervals) == 1
+        # Interval covers exactly the user's window
+        assert stops[0].open_intervals[0].start == window_start
+        assert stops[0].open_intervals[0].end == window_end
+        assert stops[0].open_intervals[0].local_start == "09:00"
+        assert stops[0].open_intervals[0].local_end == "17:00"
 
     @time_machine.travel(dt.datetime(2026, 8, 15, 12, tzinfo=dt.UTC), tick=False)
     def test_stop_closed_on_date_excluded(self) -> None:

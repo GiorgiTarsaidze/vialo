@@ -15,6 +15,7 @@ import re
 import time
 import uuid
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from aws_lambda_powertools.event_handler import Response, content_types
 from pydantic import ValidationError
@@ -29,10 +30,11 @@ from vialo.models.diagnostics import Diagnostic, DiagnosticCode, DroppedStop
 from vialo.models.itinerary import (
     ItineraryResponse,
     Locality,
+    OpenInterval,
     RouteMetrics,
     TimeWindow,
 )
-from vialo.models.providers import GroundedPlace
+from vialo.models.providers import GroundedPlace, HoursSource
 from vialo.models.requests import PlanItineraryRequest
 from vialo.pipeline.compute_matrix import compute_matrix
 from vialo.pipeline.compute_route_geometry import RouteGeometry, compute_route_geometry
@@ -127,6 +129,33 @@ def _record_latency(name: str, started_at: float) -> None:
         name=name,
         unit="Milliseconds",
         value=(time.perf_counter() - started_at) * 1000,
+    )
+
+
+def _repair_hours_with_unverified_fallback(
+    hours: list[OpenInterval] | DiagnosticCode,
+    *,
+    window_start: dt.datetime,
+    window_end: dt.datetime,
+    time_zone_id: str,
+) -> tuple[HoursSource, list[OpenInterval]] | DiagnosticCode:
+    """Apply the same missing-hours policy to repaired candidates as initial grounding."""
+    if not isinstance(hours, DiagnosticCode):
+        return "current", hours
+    if hours != DiagnosticCode.HOURS_UNAVAILABLE:
+        return hours
+
+    zone = ZoneInfo(time_zone_id)
+    return (
+        "unverified",
+        [
+            OpenInterval(
+                start=window_start,
+                end=window_end,
+                local_start=window_start.astimezone(zone).strftime("%H:%M"),
+                local_end=window_end.astimezone(zone).strftime("%H:%M"),
+            )
+        ],
     )
 
 
@@ -537,6 +566,8 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
             requested_date=requested_date,
             cache=place_cache,
             origin_tz=origin_tz,
+            window_start=window_start,
+            window_end=window_end,
         )
     except PlacesClientError:
         places_client.close()
@@ -551,7 +582,6 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
     # --- Criterion F: One repair pass for failed candidates ---
     repairable_codes = {
         DiagnosticCode.PLACE_NOT_FOUND,
-        DiagnosticCode.HOURS_UNAVAILABLE,
         DiagnosticCode.CLOSED_ON_DATE,
     }
     failed_for_repair = [d for d in grounding_diagnostics if d.code in repairable_codes][
@@ -652,17 +682,25 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
                                 tz_id=place.time_zone_id,
                                 fetch_instant=dt.datetime.now(dt.UTC),
                             )
-                            if isinstance(hours, DiagnosticCode):
-                                # Don't override known closed/missing hours
+                            resolved_hours = _repair_hours_with_unverified_fallback(
+                                hours,
+                                window_start=window_start,
+                                window_end=window_end,
+                                time_zone_id=place.time_zone_id,
+                            )
+                            if isinstance(resolved_hours, DiagnosticCode):
                                 grounding_diagnostics.append(
                                     GroundingDiagnostic(
                                         candidate_index=decision.candidate_index,
                                         name=place.display_name,
                                         code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
-                                        detail=f"Replacement has hours issue: {hours.value}",
+                                        detail=(
+                                            f"Replacement has hours issue: {resolved_hours.value}"
+                                        ),
                                     )
                                 )
                                 continue
+                            hours_source, open_intervals = resolved_hours
 
                             # Success - add repaired stop
                             orig_candidate = candidate_by_index[decision.candidate_index]
@@ -676,8 +714,8 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
                                 visit_duration_minutes=orig_candidate.visit_duration_minutes,
                                 duration_source=orig_candidate.duration_source,
                                 place=place,
-                                hours_source="current",
-                                open_intervals=hours,
+                                hours_source=hours_source,
+                                open_intervals=open_intervals,
                             )
                             grounded_stops.append(repaired_stop)
 
@@ -750,16 +788,25 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
                                 tz_id=place.time_zone_id,
                                 fetch_instant=dt.datetime.now(dt.UTC),
                             )
-                            if isinstance(hours, DiagnosticCode):
+                            resolved_hours = _repair_hours_with_unverified_fallback(
+                                hours,
+                                window_start=window_start,
+                                window_end=window_end,
+                                time_zone_id=place.time_zone_id,
+                            )
+                            if isinstance(resolved_hours, DiagnosticCode):
                                 grounding_diagnostics.append(
                                     GroundingDiagnostic(
                                         candidate_index=decision.candidate_index,
                                         name=query,
                                         code=DiagnosticCode.CANDIDATE_REPAIR_FAILED,
-                                        detail=f"Replacement has hours issue: {hours.value}",
+                                        detail=(
+                                            f"Replacement has hours issue: {resolved_hours.value}"
+                                        ),
                                     )
                                 )
                                 continue
+                            hours_source, open_intervals = resolved_hours
 
                             orig_candidate = candidate_by_index[decision.candidate_index]
                             from vialo.models.itinerary import GroundedStop
@@ -772,8 +819,8 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
                                 visit_duration_minutes=orig_candidate.visit_duration_minutes,
                                 duration_source=orig_candidate.duration_source,
                                 place=place,
-                                hours_source="current",
-                                open_intervals=hours,
+                                hours_source=hours_source,
+                                open_intervals=open_intervals,
                             )
                             grounded_stops.append(repaired_stop)
 
@@ -1057,7 +1104,6 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
     for diag in grounding_diagnostics:
         if diag.code not in {
             DiagnosticCode.PLACE_NOT_FOUND,
-            DiagnosticCode.HOURS_UNAVAILABLE,
             DiagnosticCode.CLOSED_ON_DATE,
             DiagnosticCode.OUTSIDE_LOCALITY,
             DiagnosticCode.DUPLICATE_PLACE,

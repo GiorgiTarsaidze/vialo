@@ -164,7 +164,6 @@ def collect_alternatives(
     for diag in failed_diagnostics:
         if diag.code not in (
             DiagnosticCode.PLACE_NOT_FOUND,
-            DiagnosticCode.HOURS_UNAVAILABLE,
             DiagnosticCode.CLOSED_ON_DATE,
         ):
             continue

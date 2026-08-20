@@ -1,6 +1,8 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { ComparisonResult, GroundedStop, GroundedPlace } from '../lib/types';
 import { decodePolyline } from '../lib/format';
+import { getMarkerMeta, getMarkerTitle, buildMarkerSvg } from '../lib/marker-helpers';
+import { useFullscreen } from '../hooks/use-fullscreen';
 import {
   MAPS_AUTH_FAILURE_EVENT,
   baseMapOptions,
@@ -18,12 +20,35 @@ export default function ComparisonMap({ comparison, stops, origin, destination }
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const hasRevealedRef = useRef(false);
+  const markersRevealedRef = useRef(false);
   const [mapStatus, setMapStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const authFailedRef = useRef(false);
 
   const prefersReducedMotion =
     typeof window !== 'undefined' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const refitBounds = useCallback(() => {
+    const map = mapInstanceRef.current;
+    if (!map || comparison.status === 'unavailable') return;
+    const bounds = new google.maps.LatLngBounds();
+    if (comparison.status === 'available') {
+      const naivePath = decodePolyline(comparison.naivePolyline);
+      const optimizedPath = decodePolyline(comparison.optimizedPolyline);
+      naivePath.forEach((p) => bounds.extend(p));
+      optimizedPath.forEach((p) => bounds.extend(p));
+    }
+    stops.forEach((s) => bounds.extend({ lat: s.place.location.latitude, lng: s.place.location.longitude }));
+    bounds.extend({ lat: origin.location.latitude, lng: origin.location.longitude });
+    if (destination) {
+      bounds.extend({ lat: destination.location.latitude, lng: destination.location.longitude });
+    }
+    map.fitBounds(bounds, { top: 40, bottom: 40, left: 20, right: 20 });
+  }, [comparison, stops, origin, destination]);
+
+  const { isFullscreen, containerRef, triggerRef, toggleFullscreen } = useFullscreen({
+    onResize: refitBounds,
+  });
 
   const drawMap = useCallback(() => {
     if (!mapRef.current || comparison.status === 'unavailable') return;
@@ -70,31 +95,36 @@ export default function ComparisonMap({ comparison, stops, origin, destination }
       setTimeout(() => optLine.setMap(map), 350);
     }
 
-    // Numbered markers for stops (optimized order)
+    // Category-aware numbered markers for stops (optimized order)
+    const shouldAnimateMarkers = !prefersReducedMotion && !markersRevealedRef.current;
+    markersRevealedRef.current = true;
     const optimizedOrder = comparison.optimized.stopOrder;
     optimizedOrder.forEach((candidateIdx, seqIdx) => {
       const stop = stops.find((s) => s.candidateIndex === candidateIdx);
       if (!stop) return;
-      new google.maps.Marker({
+      const meta = getMarkerMeta(stop.category);
+      const title = getMarkerTitle(seqIdx + 1, stop.name, stop.category);
+      const iconUrl = buildMarkerSvg(seqIdx + 1, stop.category, 'stop');
+
+      const marker = new google.maps.Marker({
         position: { lat: stop.place.location.latitude, lng: stop.place.location.longitude },
         map,
-        label: {
-          text: String(seqIdx + 1),
-          color: '#ffffff',
-          fontSize: '12px',
-          fontWeight: '600',
-        },
         icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 14,
-          fillColor: '#6f3e59',
-          fillOpacity: 1,
-          strokeColor: '#ffffff',
-          strokeWeight: 2,
+          url: iconUrl,
+          scaledSize: new google.maps.Size(36, 36),
+          anchor: new google.maps.Point(18, 18),
         },
-        title: `${seqIdx + 1}. ${stop.name}`,
+        title,
         zIndex: 10 + seqIdx,
       });
+
+      // One-time entrance animation (drop effect)
+      if (shouldAnimateMarkers) {
+        marker.setAnimation(google.maps.Animation.DROP);
+      }
+
+      // Store category info for accessible tooltip
+      marker.set('categoryLabel', meta.categoryLabel);
     });
 
     // Origin/start marker
@@ -102,22 +132,15 @@ export default function ComparisonMap({ comparison, stops, origin, destination }
       destination &&
       origin.placeId === destination.placeId;
 
+    const originType = sameStartEnd ? 'origin-destination' : 'origin';
+    const originIconUrl = buildMarkerSvg(0, 'other', originType);
     new google.maps.Marker({
       position: { lat: origin.location.latitude, lng: origin.location.longitude },
       map,
-      label: {
-        text: sameStartEnd ? 'S/E' : 'S',
-        color: '#2b2326',
-        fontSize: '10px',
-        fontWeight: '600',
-      },
       icon: {
-        path: google.maps.SymbolPath.CIRCLE,
-        scale: 11,
-        fillColor: '#ffffff',
-        fillOpacity: 1,
-        strokeColor: '#2b2326',
-        strokeWeight: 2,
+        url: originIconUrl,
+        scaledSize: new google.maps.Size(36, 36),
+        anchor: new google.maps.Point(18, 18),
       },
       title: sameStartEnd
         ? `Start & End: ${origin.displayName}`
@@ -126,17 +149,14 @@ export default function ComparisonMap({ comparison, stops, origin, destination }
 
     // Destination marker (distinct from start)
     if (destination && !sameStartEnd) {
+      const destIconUrl = buildMarkerSvg(0, 'other', 'destination');
       new google.maps.Marker({
         position: { lat: destination.location.latitude, lng: destination.location.longitude },
         map,
-        label: { text: 'E', color: '#ffffff', fontSize: '10px', fontWeight: '600' },
         icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 11,
-          fillColor: '#6f3e59',
-          fillOpacity: 1,
-          strokeColor: '#ffffff',
-          strokeWeight: 2,
+          url: destIconUrl,
+          scaledSize: new google.maps.Size(36, 36),
+          anchor: new google.maps.Point(18, 18),
         },
         title: `End: ${destination.displayName}`,
       });
@@ -185,7 +205,10 @@ export default function ComparisonMap({ comparison, stops, origin, destination }
     : `Map: naive route (coral dashed) and optimized route (plum solid) with ${stops.length} numbered stops${destinationLabel}`;
 
   return (
-    <div className="comparison-map-container">
+    <div
+      ref={containerRef}
+      className={`comparison-map-container ${isFullscreen ? 'comparison-map-container--fullscreen' : ''}`}
+    >
       {mapStatus !== 'unavailable' && (
         <div
           ref={mapRef}
@@ -204,6 +227,28 @@ export default function ComparisonMap({ comparison, stops, origin, destination }
             Interactive map unavailable. The verified route summary and schedule remain below.
           </p>
         </div>
+      )}
+
+      {/* Fullscreen toggle */}
+      {mapStatus === 'ready' && (
+        <button
+          ref={triggerRef}
+          type="button"
+          className="map-fullscreen-btn"
+          onClick={toggleFullscreen}
+          aria-label={isFullscreen ? 'Exit full screen' : 'View map full screen'}
+          title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+        >
+          {isFullscreen ? (
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path d="M6 2v4H2M12 2v4h4M6 16v-4H2M12 16v-4h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path d="M2 6V2h4M16 6V2h-4M2 12v4h4M16 12v4h-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          )}
+        </button>
       )}
 
       {/* Outside legend */}
@@ -274,6 +319,33 @@ const styles = `
 .comparison-map-container {
   position: relative;
   overflow: hidden;
+  border-radius: var(--radius-card);
+}
+
+.comparison-map-container--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  border-radius: 0;
+  background: var(--color-canvas);
+}
+
+.comparison-map-container--fullscreen .comparison-map {
+  height: 100vh;
+  min-height: 100vh;
+  border-radius: 0;
+  border: none;
+}
+
+.comparison-map-container--fullscreen .map-legend {
+  position: absolute;
+  bottom: var(--space-4);
+  left: var(--space-4);
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-input);
+  padding: var(--space-2) var(--space-3);
+  z-index: 10;
 }
 
 .map-status {
@@ -317,6 +389,35 @@ const styles = `
   .comparison-map {
     height: 380px;
   }
+}
+
+/* Fullscreen button */
+.map-fullscreen-btn {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-input);
+  color: var(--color-ink);
+  box-shadow: 0 2px 8px rgb(43 35 38 / 0.08);
+  z-index: 10;
+  cursor: pointer;
+  transition: background var(--duration-fast) ease;
+}
+
+.map-fullscreen-btn:hover {
+  background: var(--color-primary-soft);
+}
+
+.map-fullscreen-btn:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .map-legend {

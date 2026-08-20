@@ -17,6 +17,8 @@ export default function TimelineStopRow({ entry, stop, sequence }: TimelineStopP
 
   const openingTime = stop?.openIntervals?.[0]?.localStart.slice(0, 5);
   const openAnnotation = openingTime === arrivalTime ? `Opens ${openingTime}` : null;
+  const unverifiedHours = stop?.hoursSource === 'unverified';
+  const hoursAnnotation = unverifiedHours ? 'Hours not available · schedule unconstrained' : null;
 
   // Evidence: rating and review count
   const rating = stop?.place.rating ?? null;
@@ -52,9 +54,14 @@ export default function TimelineStopRow({ entry, stop, sequence }: TimelineStopP
           </span>
         )}
 
-        {openAnnotation && (
+        {openAnnotation && !unverifiedHours && (
           <span className="stop-annotation">
             <span aria-hidden="true">🕐</span> {openAnnotation}
+          </span>
+        )}
+        {hoursAnnotation && (
+          <span className="stop-annotation stop-annotation-unverified">
+            <span aria-hidden="true">🕐</span> {hoursAnnotation}
           </span>
         )}
         {address && <span className="stop-address">{address}</span>}
@@ -208,6 +215,11 @@ const styles = `
   font-size: 12px;
   color: var(--color-warning);
   font-weight: 500;
+}
+
+.stop-annotation-unverified {
+  color: var(--color-ink-muted);
+  font-style: italic;
 }
 
 .stop-address {

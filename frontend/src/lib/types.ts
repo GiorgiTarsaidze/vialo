@@ -7,7 +7,7 @@
 
 export type TravelMode = 'WALK' | 'DRIVE';
 export type DurationSource = 'user' | 'model_estimate';
-export type HoursSource = 'current' | 'regular';
+export type HoursSource = 'current' | 'regular' | 'unverified';
 export type StopCategory =
   | 'quick_viewpoint'
   | 'landmark'

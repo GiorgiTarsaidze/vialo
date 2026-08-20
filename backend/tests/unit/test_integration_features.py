@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vialo.api.itineraries import _repair_hours_with_unverified_fallback
 from vialo.api.photos import _PHOTO_RESOURCE_PATTERN, build_photo_url
 from vialo.domain.dropping import solve_with_dropping
 from vialo.domain.hours_category_policy import requires_verified_hours
@@ -604,14 +605,75 @@ class TestRepairPass:
 
 
 class TestVerifiedHoursPolicy:
-    """Criterion G: no category may bypass provider-backed hours."""
+    """Criterion G: missing hours are retained with unverified source, not excluded."""
 
-    def test_all_categories_require_verified_hours(self) -> None:
+    def test_no_category_requires_verified_hours(self) -> None:
         for category in StopCategory:
-            assert requires_verified_hours(category) is True
+            assert requires_verified_hours(category) is False
 
 
 # =============================================================================
+
+
+class TestRepairHoursFallback:
+    """Repair candidates use the same missing-hours policy as initial grounding."""
+
+    def test_missing_hours_become_unverified_request_window(self) -> None:
+        start = dt.datetime(2026, 8, 20, 9, 0, tzinfo=dt.UTC)
+        end = dt.datetime(2026, 8, 20, 13, 0, tzinfo=dt.UTC)
+
+        result = _repair_hours_with_unverified_fallback(
+            DiagnosticCode.HOURS_UNAVAILABLE,
+            window_start=start,
+            window_end=end,
+            time_zone_id="Europe/Rome",
+        )
+
+        assert isinstance(result, tuple)
+        source, intervals = result
+        assert source == "unverified"
+        assert intervals == [
+            OpenInterval(
+                start=start,
+                end=end,
+                local_start="11:00",
+                local_end="15:00",
+            )
+        ]
+
+    def test_explicit_closed_date_remains_rejected(self) -> None:
+        start = dt.datetime(2026, 8, 20, 9, 0, tzinfo=dt.UTC)
+        end = dt.datetime(2026, 8, 20, 13, 0, tzinfo=dt.UTC)
+
+        result = _repair_hours_with_unverified_fallback(
+            DiagnosticCode.CLOSED_ON_DATE,
+            window_start=start,
+            window_end=end,
+            time_zone_id="Europe/Rome",
+        )
+
+        assert result == DiagnosticCode.CLOSED_ON_DATE
+
+    def test_verified_intervals_are_preserved(self) -> None:
+        start = dt.datetime(2026, 8, 20, 9, 0, tzinfo=dt.UTC)
+        end = dt.datetime(2026, 8, 20, 13, 0, tzinfo=dt.UTC)
+        intervals = [
+            OpenInterval(
+                start=start,
+                end=end,
+                local_start="11:00",
+                local_end="15:00",
+            )
+        ]
+
+        assert _repair_hours_with_unverified_fallback(
+            intervals,
+            window_start=start,
+            window_end=end,
+            time_zone_id="Europe/Rome",
+        ) == ("current", intervals)
+
+
 # H: Photo proxy via query params
 # =============================================================================
 

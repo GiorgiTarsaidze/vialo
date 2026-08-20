@@ -175,11 +175,11 @@ class TestPlaceLookupRequest:
 
 
 class TestHoursCategoryPolicy:
-    """Req 6: every category requires provider-backed opening hours."""
+    """Req 6: missing hours are retained with unverified source."""
 
-    def test_all_categories_require_verified_hours(self) -> None:
+    def test_no_category_requires_verified_hours(self) -> None:
         for category in StopCategory:
-            assert requires_verified_hours(category) is True
+            assert requires_verified_hours(category) is False
 
 
 class TestPlaceEvidence:

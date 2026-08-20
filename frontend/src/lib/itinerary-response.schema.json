@@ -263,7 +263,8 @@
         "hoursSource": {
           "enum": [
             "current",
-            "regular"
+            "regular",
+            "unverified"
           ],
           "title": "Hourssource",
           "type": "string"

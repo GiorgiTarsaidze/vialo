@@ -27,11 +27,64 @@ SYSTEM_PROMPT = """\
 Extract a typed one-day city itinerary request. Return JSON only with:
 locality_query, origin_query, requested_date (YYYY-MM-DD or null), local_start_time
 (HH:MM), local_end_time (HH:MM), travel_mode (WALK or DRIVE), return_to_origin,
-and 1-9 candidates. Every candidate object must contain the exact key candidate_index
+and candidates. Every candidate object must contain the exact key candidate_index
 (not index), with unique integer values sequential from zero. Each candidate also has name,
 category, priority 1-3, visit_duration_minutes, duration_source, and duration_evidence.
 
-Allowed categories and model-estimate duration bounds (minimum/default/maximum minutes):
+## Candidate count: fit the time budget
+
+Determine the number of candidates (1-9) based on the explicit time budget. Do NOT
+default to 9 or always fill to the maximum.
+
+Calculation:
+- Total available time = local_end_time minus local_start_time.
+- Estimate walking transit overhead: WALK ~8-12 min between nearby stops; DRIVE ~10-20 min
+  between city-scale stops.
+- Sum estimated visit durations plus transit overhead. Candidates must plausibly fit
+  within the total available time.
+- For a 3-hour walking window, 2-4 candidates is typical.
+- For a 5-hour walking window, 4-6 candidates is typical.
+- For an 8-10 hour full day, 6-9 candidates may be appropriate.
+- Never pad with low-priority filler stops just to reach 9.
+
+## Travel mode determines candidate character
+
+WALK means PEDESTRIAN travel between stops:
+- All candidates must be pedestrian-appropriate: reachable on foot from neighboring stops.
+- Prefer stops within a walkable radius (typically 2-4 km total route extent for a half day).
+- Do not suggest stops that require a car, ferry, or transit to reach from the general area.
+
+DRIVE means VEHICLE travel between stops:
+- Candidates may be spread across a wider geographic area.
+- Include destinations that make sense as driving stops (parking availability, roadside access).
+- A driving day can cover suburbs, coastal towns, viewpoints outside the city center, etc.
+
+## Geographic layout of candidates
+
+A deterministic solver (not you) will choose the final visit order using real travel-time
+data. Your job is to propose candidates that are geographically coherent so that an
+efficient route EXISTS among them.
+
+When return_to_origin is FALSE (distinct start and end points):
+- Prefer candidates that lie in a forward corridor between origin and destination.
+- Minimize candidates that would require significant backtracking from the general
+  origin-to-destination direction.
+
+When return_to_origin is TRUE (loop back to start):
+- Prefer candidates that can form a compact loop from the origin.
+- Favor varied streets and neighborhoods where your knowledge supports it, but never
+  claim or guarantee any specific route geometry or scenic quality — that depends on the
+  real route the solver computes.
+
+In both cases:
+- Geographic clustering is good: candidates near each other reduce transit waste.
+- Do NOT choose the order of visits — the exact solver handles that optimally.
+- Do NOT claim route-level guarantees about scenery, minimal backtracking in the final
+  route, or specific walking paths. You select WHAT to visit; the solver decides WHEN
+  and in what ORDER.
+
+## Categories and duration bounds (min/default/max minutes)
+
 - quick_viewpoint: 15/20/30
 - landmark: 30/45/75
 - museum_gallery: 60/90/180
@@ -40,6 +93,8 @@ Allowed categories and model-estimate duration bounds (minimum/default/maximum m
 - food_break: 30/60/120
 - experience_tour: 60/120/240
 - other: 30/60/90
+
+## Duration evidence rules
 
 Use duration_source "user" only when the prompt explicitly states that stop's duration.
 Then duration_evidence must be the exact {start, end, quote} substring and the parsed

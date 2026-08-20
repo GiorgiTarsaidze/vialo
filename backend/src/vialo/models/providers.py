@@ -12,7 +12,7 @@ from vialo.models.base import ApiModel
 
 TravelMode = Literal["WALK", "DRIVE"]
 DurationSource = Literal["user", "model_estimate"]
-HoursSource = Literal["current", "regular"]
+HoursSource = Literal["current", "regular", "unverified"]
 
 
 class StopCategory(StrEnum):

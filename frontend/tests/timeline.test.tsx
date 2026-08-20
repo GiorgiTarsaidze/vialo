@@ -125,4 +125,43 @@ describe('ScheduledTimeline', () => {
     const { container } = render(<ScheduledTimeline timeline={[]} stops={[]} travelMode="WALK" />);
     expect(container.firstChild).toBeNull();
   });
+
+  it('shows unverified hours annotation for stops with hoursSource unverified', () => {
+    const unverifiedStops: GroundedStop[] = [
+      {
+        candidateIndex: 0,
+        name: 'Park Stop',
+        category: 'neighborhood_market_park',
+        priority: 1,
+        visitDurationMinutes: 30,
+        durationSource: 'model_estimate',
+        place: {
+          placeId: 'park1',
+          displayName: 'Park Stop',
+          formattedAddress: 'Park address',
+          location: { latitude: 45.43, longitude: 12.34 },
+          primaryType: 'park',
+          timeZoneId: 'Europe/Rome',
+          photos: [],
+          rating: null,
+          userRatingCount: null,
+          photoUrl: null,
+        },
+        hoursSource: 'unverified',
+        openIntervals: [{ start: '2024-01-01T09:00:00Z', end: '2024-01-01T17:00:00Z', localStart: '09:00', localEnd: '17:00' }],
+      },
+    ];
+    const unverifiedTimeline: TimelineEntry[] = [
+      {
+        type: 'visit',
+        stopIndex: 1,
+        arrival: '2024-01-01T09:10:00Z',
+        departure: '2024-01-01T09:40:00Z',
+        durationMinutes: 30,
+        intervalUsed: { start: '2024-01-01T09:00:00Z', end: '2024-01-01T17:00:00Z', localStart: '09:00', localEnd: '17:00' },
+      },
+    ];
+    render(<ScheduledTimeline timeline={unverifiedTimeline} stops={unverifiedStops} travelMode="WALK" />);
+    expect(screen.getByText('Hours not available · schedule unconstrained')).toBeInTheDocument();
+  });
 });

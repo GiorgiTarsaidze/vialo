@@ -235,9 +235,9 @@ describe('InputHero', () => {
     const promptArea = screen.getByRole('textbox', { name: /Date, time, and interests/ });
     await user.type(promptArea, '09:00-17:00, museums');
 
-    // Checkbox "End where I started" should be checked by default
-    const checkbox = screen.getByRole('checkbox');
-    expect(checkbox).toBeChecked();
+    // Switch "End where I started" should be on by default
+    const switchEl = screen.getByRole('switch', { name: /End where I started/ });
+    expect(switchEl).toHaveAttribute('aria-checked', 'true');
 
     // Submit
     await user.click(screen.getByRole('button', { name: /Build my day/ }));
@@ -289,9 +289,9 @@ describe('InputHero', () => {
     await user.type(promptArea, '09:00-17:00');
 
     // Uncheck "End where I started"
-    const checkbox = screen.getByRole('checkbox');
-    await user.click(checkbox);
-    expect(checkbox).not.toBeChecked();
+    const switchEl = screen.getByRole('switch', { name: /End where I started/ });
+    await user.click(switchEl);
+    expect(switchEl).toHaveAttribute('aria-checked', 'false');
 
     // Submit should be disabled without destination selected
     expect(screen.getByRole('button', { name: /Build my day/ })).toBeDisabled();

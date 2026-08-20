@@ -22,8 +22,14 @@ from vialo.models.itinerary import (
     TimeWindow,
     Totals,
 )
-from vialo.models.providers import GroundedPlace, Location, StopCategory
-from vialo.services.share_repository import ShareRepository
+from vialo.models.providers import (
+    GroundedPlace,
+    Location,
+    PhotoAttribution,
+    PlacePhoto,
+    StopCategory,
+)
+from vialo.services.share_repository import ShareRepository, _item_int
 
 
 def _make_itinerary() -> ItineraryResponse:
@@ -49,6 +55,20 @@ def _make_itinerary() -> ItineraryResponse:
             formatted_address="Address A",
             location=Location(latitude=45.01, longitude=12.01),
             time_zone_id="Europe/Rome",
+            photos=[
+                PlacePhoto(
+                    name="places/stop_a_place/photos/photo_ref",
+                    width_px=1200,
+                    height_px=800,
+                    author_attributions=[
+                        PhotoAttribution(
+                            display_name="Example photographer",
+                            uri="https://maps.google.com/example-contributor",
+                        )
+                    ],
+                )
+            ],
+            photo_url=("/api/photos?name=places%2Fstop_a_place%2Fphotos%2Fphoto_ref&maxWidth=400"),
         ),
         hours_source="current",
         open_intervals=[
@@ -298,3 +318,49 @@ class TestProductionProofRoundTrip:
 
         table = boto3.resource("dynamodb", region_name="us-east-1").Table("test-shares")
         assert table.scan()["Items"] == []
+
+
+class TestPersistedShareContents:
+    """Share records persist itinerary metadata, never photo bytes or raw capabilities."""
+
+    def test_photo_metadata_and_proxy_url_round_trip_without_photo_bytes(
+        self, repo: ShareRepository
+    ) -> None:
+        itinerary = _make_itinerary()
+        proof = repo.generate_proof(itinerary)
+        result = repo.create(itinerary, proof)
+
+        table = boto3.resource("dynamodb", region_name="us-east-1").Table("test-shares")
+        item = table.get_item(Key={"pk": f"SHARE#{result.share_id}"})["Item"]
+        stored_response = item["response"]
+        stored_json = str(stored_response)
+
+        assert "places/stop_a_place/photos/photo_ref" in stored_json
+        assert "/api/photos?name=" in stored_json
+        assert "Example photographer" in stored_json
+        assert "photoBytes" not in stored_json
+        assert "data:image" not in stored_json
+        assert "googleusercontent.com" not in stored_json
+        assert "deleteTokenDigest" in item
+        assert "deletionToken" not in item
+        assert result.deletion_token not in stored_json
+
+        retrieved = repo.get(result.share_id)
+        assert retrieved is not None
+        retrieved_place = retrieved.stops[0].place
+        assert retrieved_place.photo_url == itinerary.stops[0].place.photo_url
+        assert retrieved_place.photos == itinerary.stops[0].place.photos
+        assert result.share_url == f"https://vialo.place/r/{result.share_id}"
+
+    def test_share_ttl_is_thirty_days_at_creation(self, repo: ShareRepository) -> None:
+        itinerary = _make_itinerary()
+        proof = repo.generate_proof(itinerary)
+        before = int(time.time())
+        result = repo.create(itinerary, proof)
+        after = int(time.time())
+
+        table = boto3.resource("dynamodb", region_name="us-east-1").Table("test-shares")
+        item = table.get_item(Key={"pk": f"SHARE#{result.share_id}"})["Item"]
+        expected_seconds = 30 * 24 * 60 * 60
+        expires_at = _item_int(item, "expiresAt")
+        assert before + expected_seconds <= expires_at <= after + expected_seconds

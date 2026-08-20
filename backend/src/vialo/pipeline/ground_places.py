@@ -257,6 +257,8 @@ def ground_places(
     requested_date: dt.date,
     cache: PlaceCacheRepository | None = None,
     origin_tz: str | None = None,
+    window_start: dt.datetime | None = None,
+    window_end: dt.datetime | None = None,
 ) -> tuple[list[GroundedStop], list[GroundingDiagnostic]]:
     """Resolve candidates, hours, timezone, duplicates, and cache freshness."""
     grounded: list[GroundedStop] = []
@@ -394,6 +396,39 @@ def ground_places(
             fetch_instant=now,
         )
         if isinstance(hours, DiagnosticCode):
+            if (
+                hours == DiagnosticCode.HOURS_UNAVAILABLE
+                and window_start is not None
+                and window_end is not None
+            ):
+                # Retain stop with unverified hours: schedule unconstrained over the
+                # user's requested window. Do NOT synthesize 00:00–24:00.
+                local_start_str = window_start.astimezone(ZoneInfo(place.time_zone_id)).strftime(
+                    "%H:%M"
+                )
+                local_end_str = window_end.astimezone(ZoneInfo(place.time_zone_id)).strftime(
+                    "%H:%M"
+                )
+                synthetic_interval = OpenInterval(
+                    start=window_start,
+                    end=window_end,
+                    local_start=local_start_str,
+                    local_end=local_end_str,
+                )
+                grounded.append(
+                    GroundedStop(
+                        candidate_index=candidate.candidate_index,
+                        name=candidate.name,
+                        category=candidate.category,
+                        priority=candidate.priority,
+                        visit_duration_minutes=candidate.visit_duration_minutes,
+                        duration_source=candidate.duration_source,
+                        place=place,
+                        hours_source="unverified",
+                        open_intervals=[synthetic_interval],
+                    )
+                )
+                continue
             details = {
                 DiagnosticCode.CLOSED_ON_DATE: f"{candidate.name} is closed on {requested_date}",
                 DiagnosticCode.HOURS_UNAVAILABLE: (
