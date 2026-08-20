@@ -1,0 +1,84 @@
+Vialo Journal: live verification against the deployed stack
+===========================================================
+
+Every line below is the output of a real request. No fixtures.
+
+Scope. This battery covers the anonymous read surface, the refusal of every
+write path to unauthenticated and forged callers, private media enforcement,
+SPA routing, the Content-Security-Policy, and the corrected legal copy in the
+shipped bundle.
+
+The authenticated write path (publish, comment, cover upload) is deliberately
+absent. Scripting it would require a password in a committed file. It is covered
+instead by the 21 API tests in backend/tests/integration/test_blog_api.py, which
+run the real routes against moto, and by hand in the browser.
+
+Pacing. The deployed API throttles at 2 req/s with burst 5, so this script
+paces itself below that. Without the delay the battery measures its own
+throttling and reports spurious 429s.
+
+Base:  https://vialo.place
+Run:   2026-08-20T14:20:06Z
+
+-- anonymous reads ------------------------------------------
+GET /api/blog/posts                        -> 200 {"posts":[],"nextCursor":null}
+GET /api/blog/posts?city=tbilisi           -> 200 {"posts":[],"nextCursor":null}
+GET /api/blog/posts/nope                   -> 404 {"error": {"code": "POST_NOT_FOUND", "message": "That story is no longer available"}}
+GET /api/blog/posts/nope/comments          -> 404 {"error": {"code": "POST_NOT_FOUND", "message": "That story is no longer available"}}
+GET /api/blog/posts?cursor=<bad>           -> 400 {"error": {"code": "INVALID_INPUT", "message": "Invalid pagination cursor"}}
+
+   The comments line is a regression guard. Before 2026-08-20 a story hidden by
+   three reports returned 404 while its comment thread still returned 200, so
+   moderation hid the story and left the discussion under it public.
+
+-- every write refuses an anonymous caller ------------------
+POST /api/blog/posts                       -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Sign in to continue"}}
+DELETE /api/blog/posts/x                   -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Sign in to continue"}}
+POST /api/blog/posts/x/comments            -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Sign in to continue"}}
+DELETE /api/blog/posts/x/comments/y        -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Sign in to continue"}}
+POST /api/blog/posts/x/report              -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Sign in to continue"}}
+POST /api/blog/uploads                     -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Sign in to continue"}}
+GET /api/blog/me                           -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Sign in to continue"}}
+
+-- forged and malformed tokens refuse -----------------------
+Bearer garbage                             -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Your session has expired. Sign in again."}}
+alg=none JWT, real aud, future exp         -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Your session has expired. Sign in again."}}
+no Bearer prefix                           -> 401 {"error": {"code": "UNAUTHENTICATED", "message": "Sign in to continue"}}
+
+-- media is private, reachable only through the CDN ---------
+direct S3 object GET                       -> 403
+CDN /media/<missing>                       -> 403
+
+-- SPA routes serve the app rather than 404 -----------------
+/journal                                   -> 200
+/journal/new                               -> 200
+/journal/me                                -> 200
+/journal/p/abc                             -> 200
+/auth/callback                             -> 200
+
+-- the itinerary pipeline is unaffected ---------------------
+POST /api/itineraries (off-topic)          -> 400 {"error": {"code": "OFF_TOPIC", "message": "Please describe a day of sightseeing in a city"}, "diagnostics": [{"code": "OFF_TOPIC", "message": "Please describe 
+
+-- Content-Security-Policy ----------------------------------
+  content-security-policy: default-src 'self'
+  script-src 'self' https://maps.googleapis.com https://maps.gstatic.com
+  style-src 'self' https://fonts.googleapis.com 'unsafe-inline'
+  font-src 'self' https://fonts.gstatic.com
+  img-src 'self' https://*.googleapis.com https://*.gstatic.com https://*.ggpht.com https://*.googleusercontent.com https://maps.google.com data: blob:
+  connect-src 'self' https://maps.googleapis.com https://maps.gstatic.com https://cognito-idp.us-east-1.amazonaws.com https://vialo-place-journal.auth.us-east-1.amazoncognito.com https://vialo-journal-media-381492291672-us-east-1-dev.s3.amazonaws.com https://vialo-journal-media-381492291672-us-east-1-dev.s3.us-east-1.amazonaws.com
+  frame-src https://www.google.com https://maps.google.com
+  worker-src blob:
+  object-src 'none'
+  base-uri 'self'
+  form-action 'self'
+  frame-ancestors 'none'
+
+-- corrected legal copy is live in the shipped bundle -------
+  bundle: /assets/index-B3Kk0cQW.js
+  does not create accounts or collect personal information   hits=0  expected 0, the claim was false and was removed
+  Does not require an account to plan a day                  hits=1  expected 1
+  held by AWS Cognito, not by Vialo                          hits=1  expected 1
+  Journal accounts and content                               hits=1  expected 1
+
+-- regenerate ------------------------------------------------
+  bash docs/kiro-evidence/regenerate-journal-verification.sh

@@ -8,9 +8,14 @@ from dataclasses import dataclass
 from vialo.domain.route_matrix import parse_protobuf_duration
 from vialo.models.itinerary import GroundedStop
 from vialo.models.providers import GroundedPlace, TravelMode
-from vialo.services.routes_client import RoutesClient, RoutesClientError
+from vialo.services.routes_client import RoutePoint, RoutesClient, RoutesClientError
 
 logger = logging.getLogger(__name__)
+
+
+def _point(place: GroundedPlace) -> RoutePoint:
+    """Route by verified place ID, with coordinates retained as the fallback."""
+    return RoutePoint(location=place.location, place_id=place.place_id or None)
 
 
 @dataclass
@@ -44,22 +49,22 @@ def compute_route_geometry(
     # Determine intermediates and final destination
     if destination is not None:
         # Fixed destination: all stops are intermediates
-        intermediates = [s.place.location for s in ordered_stops]
-        dest_location = destination.location
+        intermediates = [_point(s.place) for s in ordered_stops]
+        dest_location = _point(destination)
     elif return_to_origin:
         # Return to origin: all stops are intermediates, destination = origin
-        intermediates = [s.place.location for s in ordered_stops]
-        dest_location = origin.location
+        intermediates = [_point(s.place) for s in ordered_stops]
+        dest_location = _point(origin)
     else:
         # Open-ended: last stop is destination, rest are intermediates
         intermediates = (
-            [s.place.location for s in ordered_stops[:-1]] if len(ordered_stops) > 1 else []
+            [_point(s.place) for s in ordered_stops[:-1]] if len(ordered_stops) > 1 else []
         )
-        dest_location = ordered_stops[-1].place.location
+        dest_location = _point(ordered_stops[-1].place)
 
     try:
         response = client.compute_routes(
-            origin=origin.location,
+            origin=_point(origin),
             intermediates=intermediates,
             destination=dest_location,
             travel_mode=travel_mode,

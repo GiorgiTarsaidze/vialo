@@ -118,12 +118,12 @@
   - Build naive retained order and simulate its feasibility.
   - _Requirements: 8, 9.7_
 
-- [ ] **13. Benchmark exactness at the product cap**
+- [x] **13. Benchmark exactness at the product cap**
   - Benchmark representative 8! and 9! schedules after warm-up in Python 3.12 using the SAM deployment build and configured Lambda memory.
   - Record median/p95 and permutations evaluated in `DEVLOG.md`.
   - Add safe branch-and-bound pruning only if required; prove outputs match exhaustive reference cases.
   - _Requirements: 7.7–7.8_
-  - _Evidence status: local Python 3.12 warm-up plus 10-sample median/p95 is recorded in `DEVLOG.md`; a deployed 512 MB Lambda benchmark remains pending._
+  - _Evidence status: complete. `scripts/solver_benchmark.py` runs the production `solve_exact` and `solve_route` code paths on a fixed-seed directed matrix, locally and inside a throwaway ARM64 Lambda built from the deployed dependency layer. Raw results are committed in `docs/kiro-evidence/solver-benchmark/`. Worst-case 9-stop search plus progressive dropping measured 11.98 s at 512 MB, 5.76 s at 1024 MB, and 3.53 s at 1769 MB, against an observed non-solver request maximum of 19.6 s inside a 30 s budget. No pruning was added; instead the benchmark justified raising `MemorySize` to 1769 MB (one full vCPU) so the exhaustive search stays provably optimal and still fits the budget._
 
 **Wave 4 demo:** Synthetic and fixture-backed inputs produce a deterministic provably optimal schedule with visible waits and explicit dropped-stop reasons.
 

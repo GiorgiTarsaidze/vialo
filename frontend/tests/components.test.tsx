@@ -465,12 +465,11 @@ describe('DroppedStops', () => {
       { candidateIndex: 4, name: 'Museum', reasonCode: 'NO_FEASIBLE_ITINERARY' as const, reasonDetail: 'Schedule full after 6 stops' },
     ];
     render(<DroppedStops drops={drops} />);
-    expect(screen.getByText("2 stops couldn't fit")).toBeInTheDocument();
+    expect(screen.getByText('Also worth seeing')).toBeInTheDocument();
     expect(screen.getByText('Arsenale')).toBeInTheDocument();
     expect(screen.getByText('Museum')).toBeInTheDocument();
-    // Grouping labels
-    expect(screen.getByText('Closed or hours unknown')).toBeInTheDocument();
-    expect(screen.getByText("Didn't fit the schedule")).toBeInTheDocument();
+    expect(screen.getByText('Closed on the day you asked for.')).toBeInTheDocument();
+    expect(screen.getByText('Adding it would push the day past your end time.')).toBeInTheDocument();
   });
 
   it('renders nothing for empty drops', () => {
@@ -483,23 +482,24 @@ describe('DroppedStops', () => {
       { candidateIndex: 3, name: 'Arsenale', reasonCode: 'CLOSED_ON_DATE' as const, reasonDetail: 'Closed on this day' },
     ];
     render(<DroppedStops drops={drops} />);
-    expect(screen.getByText("1 stop couldn't fit")).toBeInTheDocument();
+    expect(screen.getByText('Also worth seeing')).toBeInTheDocument();
+    expect(screen.getByText('Arsenale')).toBeInTheDocument();
   });
 
-  it('classifies PLACE_NOT_FOUND as "Choose a specific place"', () => {
+  it('classifies PLACE_NOT_FOUND with friendly message', () => {
     const drops = [
       { candidateIndex: 1, name: 'Some Vague Place', reasonCode: 'PLACE_NOT_FOUND' as const, reasonDetail: 'No matching place found' },
     ];
     render(<DroppedStops drops={drops} />);
-    expect(screen.getByText('Choose a specific place')).toBeInTheDocument();
+    expect(screen.getByText('Google Places had no unambiguous match for it.')).toBeInTheDocument();
   });
 
-  it('classifies CANDIDATE_REPAIR_FAILED as "Choose a specific place"', () => {
+  it('classifies CANDIDATE_REPAIR_FAILED with friendly message', () => {
     const drops = [
       { candidateIndex: 2, name: 'Ambiguous Spot', reasonCode: 'CANDIDATE_REPAIR_FAILED' as const, reasonDetail: 'Could not resolve' },
     ];
     render(<DroppedStops drops={drops} />);
-    expect(screen.getByText('Choose a specific place')).toBeInTheDocument();
+    expect(screen.getByText('No verifiable alternative nearby.')).toBeInTheDocument();
   });
 });
 

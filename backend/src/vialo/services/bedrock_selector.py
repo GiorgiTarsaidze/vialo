@@ -17,7 +17,7 @@ from vialo.domain.duration_bounds import (
     validate_user_duration,
 )
 from vialo.models.diagnostics import DiagnosticCode
-from vialo.models.providers import ParsedIntent
+from vialo.models.providers import CandidateStop, ParsedIntent
 from vialo.services.candidate_selector import SelectorError
 from vialo.services.spend_limiter import BedrockSpendLimiter, BudgetExceededError
 
@@ -31,21 +31,26 @@ and candidates. Every candidate object must contain the exact key candidate_inde
 (not index), with unique integer values sequential from zero. Each candidate also has name,
 category, priority 1-3, visit_duration_minutes, duration_source, and duration_evidence.
 
-## Candidate count: fit the time budget
+## Candidate count: fit the time budget, then add spares
 
-Determine the number of candidates (1-9) based on the explicit time budget. Do NOT
-default to 9 or always fill to the maximum.
+Determine the number of candidates based on the explicit time budget, then append
+2 extra spare ideas so the day can still be filled if a stop turns out to be
+unverifiable or closed. Do NOT default to 9.
 
 Calculation:
 - Total available time = local_end_time minus local_start_time.
 - Estimate walking transit overhead: WALK ~8-12 min between nearby stops; DRIVE ~10-20 min
   between city-scale stops.
-- Sum estimated visit durations plus transit overhead. Candidates must plausibly fit
-  within the total available time.
-- For a 3-hour walking window, 2-4 candidates is typical.
-- For a 5-hour walking window, 4-6 candidates is typical.
-- For an 8-10 hour full day, 6-9 candidates may be appropriate.
-- Never pad with low-priority filler stops just to reach 9.
+- Sum estimated visit durations plus transit overhead. The primary candidates must plausibly
+  fit within the total available time.
+- For a 3-hour walking window, 2-4 primary candidates is typical.
+- For a 5-hour walking window, 4-6 primary candidates is typical.
+- For an 8-10 hour full day, 6-9 primary candidates may be appropriate.
+- Then add 2 spare candidates with priority 3, ordered last, never exceeding 9 candidates
+  in total. Spares are genuinely worth seeing, geographically coherent with the others, and
+  ideally shorter or closer than the primaries. They are dropped first if the day cannot fit
+  everything, so never place an essential sight at priority 3.
+- Never pad with filler. If there is nothing else worth seeing nearby, return fewer.
 
 ## Travel mode determines candidate character
 
@@ -113,6 +118,9 @@ REPAIR_INSTRUCTION = (
 
 # Conservative framing overhead for Bedrock Converse (token count)
 _CONVERSE_FRAMING_TOKENS = 4096
+
+# Upper bound on how many stops a single top-up call may contribute.
+MAX_TOP_UP_CANDIDATES = 6
 
 
 class BedrockCandidateSelector:
@@ -328,6 +336,97 @@ class BedrockCandidateSelector:
                 message="Repair returned empty response",
             )
         return text
+
+    def top_up(self, top_up_context: str, next_candidate_index: int) -> list[CandidateStop]:
+        """Ask for replacement candidates when grounding left the day too thin.
+
+        One bounded call, its own reservation, and no prose. Every returned
+        candidate is schema-validated and category-bounded exactly like an
+        initial selection, then grounded through Places like any other stop, so
+        a top-up can never inject an unverified place or invented hours.
+
+        Returns an empty list when the model returns nothing usable.
+
+        Raises:
+            BudgetExceededError: If budget cap would be exceeded.
+            SelectorError: If the provider is unavailable.
+        """
+        system = [
+            {
+                "text": (
+                    "You extend a partially built one-day city itinerary. Some stops could "
+                    "not be verified against Google Places, so the day is too thin. Return "
+                    'ONLY JSON of the form {"candidates": [...]} with additional stops that '
+                    "are worth visiting, are inside the stated locality, and are "
+                    "geographically coherent with the stops already accepted. Never repeat an "
+                    "accepted or rejected name. Each candidate object contains the exact keys "
+                    "candidate_index, name, category, priority, visit_duration_minutes, "
+                    "duration_source, and duration_evidence. Use duration_source "
+                    '"model_estimate" and duration_evidence null. Respect the category '
+                    "duration ranges: quick_viewpoint 15-30, landmark 30-75, museum_gallery "
+                    "60-180, historic_religious_site 30-120, neighborhood_market_park 30-120, "
+                    "food_break 30-120, experience_tour 60-240, other 30-90. Prefer stops "
+                    "that are open long hours and well known enough to be findable. Do not "
+                    "emit prose or markdown fences."
+                )
+            }
+        ]
+        messages: list[dict[str, Any]] = [{"role": "user", "content": [{"text": top_up_context}]}]
+
+        try:
+            response = self._call_converse_with_budget(system, messages)
+        except BudgetExceededError:
+            raise
+        except (BotoCoreError, ClientError) as exc:
+            raise SelectorError(
+                code=DiagnosticCode.PROVIDER_UNAVAILABLE,
+                message="Top-up provider unavailable",
+            ) from exc
+
+        text = self._extract_text(response)
+        if text is None:
+            return []
+        return self._parse_top_up(text, next_candidate_index)
+
+    def _parse_top_up(self, text: str, next_candidate_index: int) -> list[CandidateStop]:
+        """Validate top-up candidates and renumber them after the existing ones."""
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()[1:]
+            if lines and lines[-1].strip() == "```":
+                lines.pop()
+            cleaned = "\n".join(lines)
+
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return []
+
+        raw_candidates = payload.get("candidates") if isinstance(payload, dict) else payload
+        if not isinstance(raw_candidates, list):
+            return []
+
+        accepted: list[CandidateStop] = []
+        for raw in raw_candidates:
+            if not isinstance(raw, dict):
+                continue
+            data = dict(raw)
+            # The index is ours to assign; the model must not renumber existing stops.
+            data["candidate_index"] = next_candidate_index + len(accepted)
+            data["duration_source"] = "model_estimate"
+            data["duration_evidence"] = None
+            try:
+                # JSON mode: the strict Python-mode validator rejects plain
+                # strings for enums, and the model speaks JSON.
+                candidate = CandidateStop.model_validate_json(json.dumps(data, ensure_ascii=False))
+            except (ValidationError, TypeError, ValueError):
+                continue
+            if not validate_model_duration(candidate.category, candidate.visit_duration_minutes):
+                continue
+            accepted.append(candidate)
+            if len(accepted) >= MAX_TOP_UP_CANDIDATES:
+                break
+        return accepted
 
     def _extract_text(self, response: dict[str, Any]) -> str | None:
         """Extract text from Bedrock Converse response output."""

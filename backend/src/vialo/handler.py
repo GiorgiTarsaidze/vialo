@@ -13,6 +13,7 @@ metrics = Metrics(namespace="Vialo")
 app = APIGatewayHttpResolver()
 
 # Import route modules which register with app — imports have side effects
+import vialo.api.blog  # noqa: E402, F401
 import vialo.api.itineraries  # noqa: E402, F401
 import vialo.api.photos  # noqa: E402, F401
 import vialo.api.places  # noqa: E402, F401

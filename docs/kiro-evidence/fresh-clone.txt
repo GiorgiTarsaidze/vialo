@@ -1,0 +1,33 @@
+# Fresh-clone verification (Phase 4 clean-machine gate)
+# Performed 2026-08-20 09:54–09:56 UTC from the public GitHub remote.
+# Every command is taken verbatim from README.md 'Local validation'.
+
+$ git clone https://github.com/GiorgiTarsaidze/vialo.git /tmp/vialo-fresh
+cloned at acffec1 (Thu Aug 20 11:46:36 2026 +0400); .kiro/ present and tracked; no .env in the clone
+
+toolchain: Python 3.12.3 · uv 0.11.6 · Node v24.12.0 · npm 11.6.2
+
+backend and infrastructure
+  uv sync --project backend --extra dev   -> resolved and installed from the committed uv.lock
+  make test                               -> 455 passed, 83% statement coverage
+  make lint                               -> ruff check: All checks passed; 81 files already formatted
+  make typecheck                          -> mypy: Success, no issues in 81 source files
+  make layer                              -> layer_verification=PASS native_extensions=1
+                                             uncompressed_bytes=31638225 zipped_bytes=18099102
+                                             platform manylinux2014_aarch64, python 3.12
+  make validate                           -> infra/template.yaml is a valid SAM Template
+  make build                              -> SAM build succeeded
+
+frontend
+  npm ci                                  -> clean install from the committed lockfile
+  npm run generate:contracts              -> regenerated schema is byte-identical to the committed one
+                                             (git status clean after generation: no contract drift)
+  npm run lint                            -> eslint clean
+  npm run typecheck                       -> tsc --noEmit clean
+  npm test                                -> 116 passed (10 files)
+  npm run build                            -> built in 827 ms; index js 274.66 kB (82.51 kB gzip)
+  npm audit                               -> found 0 vulnerabilities
+
+Result: PASS. A judge following README.md verbatim on a clean checkout reproduces every gate.
+Note: the backend test count is 455 at the cloned commit and 463 after the hardening tests added later
+the same day (bounded model-authored strings).

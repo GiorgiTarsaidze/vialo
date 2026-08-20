@@ -513,7 +513,9 @@ class TestCompletePipelineContract:
 
         assert response["statusCode"] == 200
         body = json.loads(response["body"])
-        assert body["status"] == "complete"
+        # One stop inside a wide window no longer counts as a complete day: the
+        # status now reports whether the schedule fills the requested window.
+        assert body["status"] == "partial"
         assert body["comparison"]["outcome"] == "no_reordering_needed"
         assert body["shareProof"]["hmac"] == "a" * 64
         assert any(item["code"] == "WALKING_ROUTES_BETA" for item in body["diagnostics"])

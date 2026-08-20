@@ -17,8 +17,13 @@ from __future__ import annotations
 
 from vialo.domain.route_matrix import MatrixEdge, build_matrix
 from vialo.models.itinerary import GroundedStop
-from vialo.models.providers import GroundedPlace, Location, TravelMode
-from vialo.services.routes_client import RoutesClient
+from vialo.models.providers import GroundedPlace, TravelMode
+from vialo.services.routes_client import RoutePoint, RoutesClient
+
+
+def _point(place: GroundedPlace) -> RoutePoint:
+    """Route by verified place ID, with coordinates retained as the fallback."""
+    return RoutePoint(location=place.location, place_id=place.place_id or None)
 
 
 def compute_matrix(
@@ -48,10 +53,12 @@ def compute_matrix(
         (N+1)×(N+1) or (N+2)×(N+2) directed matrix.
     """
     if destination is None:
-        # Legacy square layout
-        locations: list[Location] = [origin.location]
+        # Legacy square layout. Waypoints carry verified place IDs so Google
+        # routes from real entrances instead of snapping coordinates to the
+        # nearest routable edge, which is often a car road.
+        locations: list[RoutePoint] = [_point(origin)]
         for stop in stops:
-            locations.append(stop.place.location)
+            locations.append(_point(stop.place))
 
         elements = client.compute_route_matrix(
             origins=locations,
@@ -66,15 +73,15 @@ def compute_matrix(
     matrix_size = n_stops + 2
 
     # Origins: [origin, stop_0, ..., stop_N]  (indices 0..N in call)
-    api_origins: list[Location] = [origin.location]
+    api_origins: list[RoutePoint] = [_point(origin)]
     for stop in stops:
-        api_origins.append(stop.place.location)
+        api_origins.append(_point(stop.place))
 
     # Destinations: [stop_0, ..., stop_N, destination]  (indices 0..N in call)
-    api_destinations: list[Location] = []
+    api_destinations: list[RoutePoint] = []
     for stop in stops:
-        api_destinations.append(stop.place.location)
-    api_destinations.append(destination.location)
+        api_destinations.append(_point(stop.place))
+    api_destinations.append(_point(destination))
 
     # Element count: len(api_origins) × len(api_destinations) = (N+1) × (N+1)
     # For N=9: 10 × 10 = 100 ≤ max 100

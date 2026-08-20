@@ -5,7 +5,11 @@ Description: Vialo backend — itinerary engine (dev)
 Globals:
   Function:
     Runtime: python3.12
-    MemorySize: 512
+    # 1769 MB is one full vCPU. Chosen from the deployed ARM64 solver benchmark
+    # (docs/kiro-evidence/solver-benchmark/): the worst-case 9-stop exhaustive
+    # search plus progressive dropping takes 11.98 s at 512 MB and 3.53 s here,
+    # which keeps a full 9-stop request inside the 30 s API Gateway budget.
+    MemorySize: 1769
     Timeout: 30
     Architectures:
       - arm64
@@ -43,6 +47,10 @@ Parameters:
   ShareDeletionSecret:
     Type: String
     NoEcho: true
+  CognitoDomainPrefix:
+    Type: String
+    Description: Globally unique Cognito hosted-UI domain prefix for Vialo Journal
+    Default: vialo-place-journal
   LogLevel:
     Type: String
     Default: INFO
@@ -128,6 +136,18 @@ Resources:
                   - !GetAtt PlaceCacheTable.Arn
                   - !GetAtt SharedItinerariesTable.Arn
                   - !GetAtt RequestLimitsTable.Arn
+                  - !GetAtt JournalTable.Arn
+                  - !Sub "${JournalTable.Arn}/index/*"
+        - PolicyName: vialo-journal-media-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Presigning inherits the signer's permission, so the function may
+              # only create cover objects. It can never read or delete them.
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub "${JournalMediaBucket.Arn}/covers/*"
         - PolicyName: vialo-bedrock-invoke
           PolicyDocument:
             Version: "2012-10-17"
@@ -174,6 +194,7 @@ Resources:
         AllowHeaders:
           - Content-Type
           - X-Share-Delete-Token
+          - Authorization
       Tags:
         Project: vialo
         vialo: "true"
@@ -230,6 +251,12 @@ Resources:
           RATE_LIMIT_HMAC_SECRET: !Ref RateLimitHmacSecret
           SHARE_SIGNING_SECRET: !Ref ShareSigningSecret
           SHARE_DELETION_SECRET: !Ref ShareDeletionSecret
+          DYNAMODB_TABLE_BLOG: !Ref JournalTable
+          MEDIA_BUCKET: !Ref JournalMediaBucket
+          MEDIA_BASE_URL: /media
+          COGNITO_USER_POOL_ID: !Ref JournalUserPool
+          COGNITO_CLIENT_ID: !Ref JournalUserPoolClient
+          COGNITO_REGION: !Ref AWS::Region
           POWERTOOLS_SERVICE_NAME: vialo-api
           LOG_LEVEL: !Ref LogLevel
       Events:
@@ -274,6 +301,66 @@ Resources:
           Properties:
             ApiId: !Ref VialoApi
             Path: /api/photos
+            Method: GET
+        JournalListPosts:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/posts
+            Method: GET
+        JournalCreatePost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/posts
+            Method: POST
+        JournalGetPost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/posts/{postId}
+            Method: GET
+        JournalDeletePost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/posts/{postId}
+            Method: DELETE
+        JournalListComments:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/posts/{postId}/comments
+            Method: GET
+        JournalCreateComment:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/posts/{postId}/comments
+            Method: POST
+        JournalDeleteComment:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/posts/{postId}/comments/{commentId}
+            Method: DELETE
+        JournalReportPost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/posts/{postId}/report
+            Method: POST
+        JournalUploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/uploads
+            Method: POST
+        JournalViewer:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VialoApi
+            Path: /api/blog/me
             Method: GET
       Tags:
         Project: vialo
@@ -385,6 +472,247 @@ Resources:
         - Key: ManagedBy
           Value: sam
 
+  # --- Vialo Journal: table, media bucket, and user pool ---
+  # Journal data is deliberately separate from the place cache, anonymous shares,
+  # and rate limits: different retention, different access pattern, different
+  # blast radius. Three GSIs serve the feed, one city, and one author, and each
+  # projects only listing attributes so a feed query never reads a story body.
+  JournalTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: vialo-journal-dev
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+        - AttributeName: gsi2pk
+          AttributeType: S
+        - AttributeName: gsi2sk
+          AttributeType: S
+        - AttributeName: gsi3pk
+          AttributeType: S
+        - AttributeName: gsi3sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes: &journalListingAttributes
+              - postId
+              - title
+              - city
+              - cityKey
+              - excerpt
+              - coverImageKey
+              - authorId
+              - authorName
+              - createdAt
+              - commentCount
+              - hasRoute
+              - stopCount
+              - hidden
+        - IndexName: gsi2
+          KeySchema:
+            - AttributeName: gsi2pk
+              KeyType: HASH
+            - AttributeName: gsi2sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes: *journalListingAttributes
+        - IndexName: gsi3
+          KeySchema:
+            - AttributeName: gsi3pk
+              KeyType: HASH
+            - AttributeName: gsi3sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes: *journalListingAttributes
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+  JournalMediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "vialo-journal-media-${AWS::AccountId}-${AWS::Region}-dev"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - https://vialo.place
+            AllowedMethods:
+              - POST
+            AllowedHeaders:
+              - "*"
+            ExposedHeaders:
+              - ETag
+            MaxAge: 3000
+      Tags:
+        - Key: Project
+          Value: vialo
+        - Key: vialo
+          Value: "true"
+        - Key: Environment
+          Value: dev
+        - Key: ManagedBy
+          Value: sam
+
+  JournalMediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref JournalMediaBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOACRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${JournalMediaBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+
+  # Sign-up is intentionally minimal: email plus password, no verification code.
+  # The PreSignUp trigger confirms the account immediately. The email is only a
+  # login identifier; it is never stored in the Journal table or returned by the API.
+  JournalAutoConfirmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: vialo-journal-autoconfirm-dev
+      Runtime: python3.12
+      Handler: index.handler
+      MemorySize: 128
+      Timeout: 5
+      InlineCode: |
+        def handler(event, context):
+            """Confirm new Journal accounts without an emailed code."""
+            event["response"]["autoConfirmUser"] = True
+            if event.get("request", {}).get("userAttributes", {}).get("email"):
+                event["response"]["autoVerifyEmail"] = True
+            return event
+      Tags:
+        Project: vialo
+        vialo: "true"
+        Environment: dev
+        ManagedBy: sam
+
+  JournalAutoConfirmPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt JournalAutoConfirmFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt JournalUserPool.Arn
+
+  JournalUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: vialo-journal-dev
+      UsernameAttributes:
+        - email
+      LambdaConfig:
+        PreSignUp: !GetAtt JournalAutoConfirmFunction.Arn
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: false
+      Schema:
+        - Name: nickname
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+      UserPoolTags:
+        Project: vialo
+        vialo: "true"
+        Environment: dev
+        ManagedBy: sam
+
+  JournalUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: vialo-journal-web
+      UserPoolId: !Ref JournalUserPool
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - https://vialo.place/auth/callback
+        - http://localhost:5173/auth/callback
+      LogoutURLs:
+        - https://vialo.place/journal
+        - http://localhost:5173/journal
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      PreventUserExistenceErrors: ENABLED
+
+  JournalUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoDomainPrefix
+      UserPoolId: !Ref JournalUserPool
+
   # --- Frontend Hosting ---
 
   # S3 bucket — private, encrypted, no website hosting, no public ACL
@@ -470,6 +798,22 @@ Resources:
         Comment: "Vialo SPA rewrite — extensionless non-API paths to /index.html"
         Runtime: cloudfront-js-2.0
 
+  # CloudFront Function — strip the /media prefix so keys map to bucket objects
+  JournalMediaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: vialo-journal-media-rewrite
+      AutoPublish: true
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          request.uri = request.uri.replace(/^\/media/, '');
+          return request;
+        }
+      FunctionConfig:
+        Comment: "Vialo Journal media — map /media/<key> to the bucket key"
+        Runtime: cloudfront-js-2.0
+
   # Response headers policy — strict CSP compatible with Google Maps JS + self-hosted fonts
   SecurityHeadersPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
@@ -495,7 +839,7 @@ Resources:
             Protection: true
             Override: true
           ContentSecurityPolicy:
-            ContentSecurityPolicy: "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' https://*.googleapis.com https://*.gstatic.com https://*.ggpht.com https://*.googleusercontent.com https://maps.google.com data: blob:; connect-src 'self' https://maps.googleapis.com https://maps.gstatic.com; frame-src https://www.google.com https://maps.google.com; worker-src blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            ContentSecurityPolicy: !Sub "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' https://*.googleapis.com https://*.gstatic.com https://*.ggpht.com https://*.googleusercontent.com https://maps.google.com data: blob:; connect-src 'self' https://maps.googleapis.com https://maps.gstatic.com https://cognito-idp.${AWS::Region}.amazonaws.com https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com https://vialo-journal-media-${AWS::AccountId}-${AWS::Region}-dev.s3.amazonaws.com https://vialo-journal-media-${AWS::AccountId}-${AWS::Region}-dev.s3.${AWS::Region}.amazonaws.com; frame-src https://www.google.com https://maps.google.com; worker-src blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
             Override: true
 
   # CloudFront Distribution — vialo.place
@@ -522,6 +866,11 @@ Resources:
             S3OriginConfig:
               OriginAccessIdentity: ""
             OriginAccessControlId: !GetAtt FrontendOAC.Id
+          - Id: JournalMediaOrigin
+            DomainName: !GetAtt JournalMediaBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
           - Id: ApiOrigin
             DomainName: api.vialo.place
             CustomOriginConfig:
@@ -545,6 +894,22 @@ Resources:
             - EventType: viewer-request
               FunctionARN: !GetAtt SpaRewriteFunction.FunctionARN
         CacheBehaviors:
+          # Journal cover images: private bucket, read only through this distribution.
+          - PathPattern: /media/*
+            TargetOriginId: JournalMediaOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: true
+            AllowedMethods:
+              - GET
+              - HEAD
+            CachedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+            ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt JournalMediaRewriteFunction.FunctionARN
           - PathPattern: /api/*
             TargetOriginId: ApiOrigin
             ViewerProtocolPolicy: redirect-to-https
@@ -600,3 +965,18 @@ Outputs:
   FrontendUrl:
     Description: Production frontend URL
     Value: "https://vialo.place"
+  JournalTableName:
+    Description: DynamoDB table for Vialo Journal posts and comments
+    Value: !Ref JournalTable
+  JournalMediaBucketName:
+    Description: Private S3 bucket for Journal cover images
+    Value: !Ref JournalMediaBucket
+  JournalUserPoolId:
+    Description: Cognito user pool for Vialo Journal
+    Value: !Ref JournalUserPool
+  JournalUserPoolClientId:
+    Description: Cognito app client for the Vialo Journal SPA
+    Value: !Ref JournalUserPoolClient
+  JournalAuthDomain:
+    Description: Cognito hosted UI domain for Vialo Journal
+    Value: !Sub "${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com"

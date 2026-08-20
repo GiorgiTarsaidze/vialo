@@ -1,0 +1,35 @@
+# Live production run — 2026-08-20 10:25–10:27 UTC
+
+Performed against `https://vialo.place` through Playwright, after raising the Lambda to 1769 MB.
+Nothing below is fixture data; every value came from a request computed at that moment.
+
+## Request
+
+Committed one-click example: "Tomorrow, start at Piazza del Plebiscito in Naples at 10:00. Plan a
+walking day until 18:00 with the main highlights and great pizza for lunch."
+
+## Result
+
+- Status: partial — `7 of 8 stops fit 10:00–18:00`, locality `Naples, Italy`, mode walking.
+- Comparison: naive order 4.7 km / 1 hr 08 min and flagged `Misses a closing time`; Vialo order
+  4.0 km / 58 min and `Fits schedule`. Both lines drawn from paired real `computeRoutes` responses.
+- Schedule: Piazza del Plebiscito 10:00–10:45, Castel Nuovo 10:51–11:51, Spaccanapoli 12:17–13:17,
+  Sansevero Chapel 13:21–14:06, Cathedral of Santa Maria Assunta 14:13–15:13, Gino e Toto Sorbillo
+  15:16–16:16, MANN 16:28–17:58, with real walking legs of 512 m, 1.8 km, 285 m, 455 m, 210 m, 785 m.
+- Provenance: every visit duration is labelled `estimated`; ratings and review counts come from
+  Places; each photo carries its returned author attribution as a linked credit.
+- Piazza del Plebiscito shows `Hours not available · schedule unconstrained`, which is the
+  `hoursSource: unverified` disclosure rather than an invented opening time.
+- Dropped: Quartieri Spagnoli, with the stated reason "Dropped to find a feasible schedule; visit
+  requires 45 min".
+- Handoff: full Google Maps route link plus two browser-safe parts, and a share-link action.
+
+## Interface checks in the same session
+
+- 390 × 844 viewport: `document.scrollWidth - clientWidth = 0`, so no horizontal overflow.
+  Screenshots: `live-result-mobile-390.png`, `live-result-desktop.png`.
+- A first attempt using the free-text origin "Napoli Centrale" returned the typed error
+  `Could not resolve the requested starting point unambiguously` in an `alert` region rather than a
+  stack trace. Ambiguity is refused instead of guessed.
+- Console: one 400 from that deliberate ambiguous request, plus Google's `google.maps.Marker`
+  deprecation notice from the Maps JavaScript API itself. No application errors.

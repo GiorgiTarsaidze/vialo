@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from vialo.models.providers import ParsedIntent
+from vialo.models.providers import CandidateStop, ParsedIntent
 
 
 class CandidateSelector(Protocol):
@@ -15,6 +15,17 @@ class CandidateSelector(Protocol):
 
         Raises:
             SelectorError: If the model output is invalid or the provider is unavailable.
+        """
+        ...
+
+    def top_up(self, top_up_context: str, next_candidate_index: int) -> list[CandidateStop]:
+        """Return extra validated candidates when grounding left the day too thin.
+
+        Implementations must renumber candidates from next_candidate_index and
+        must never return prose. An empty list means no usable suggestion.
+
+        Raises:
+            SelectorError: If the provider is unavailable.
         """
         ...
 

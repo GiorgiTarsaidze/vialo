@@ -1,0 +1,27 @@
+# Kiro hook executions — real transcripts
+# 2026-08-20T10:17:19Z · commit acffec1
+
+## agent validation
+$ kiro-cli agent validate --path .kiro/agents/backend-engineer.json
+valid
+$ kiro-cli agent validate --path .kiro/agents/ui-reviewer.json
+valid
+
+## postToolUse(write) hook — .kiro/hooks/validate-repository.sh
+$ .kiro/hooks/validate-repository.sh
+repository validation passed
+
+## stop hook (frontend agent) — .kiro/hooks/validate-frontend.sh
+$ .kiro/hooks/validate-frontend.sh
+> vialo-frontend@1.0.0 typecheck
+> tsc --noEmit
+
+frontend validation passed
+
+## stop hook (backend agent) — .kiro/hooks/validate-backend.sh
+$ .kiro/hooks/validate-backend.sh
+  All checks passed!
+  81 files already formatted
+  Success: no issues found in 81 source files
+  463 passed, 202 warnings in 12.88s
+  backend validation passed

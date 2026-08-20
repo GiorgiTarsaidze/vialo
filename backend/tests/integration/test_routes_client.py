@@ -11,7 +11,7 @@ import pytest
 import respx
 
 from vialo.models.providers import Location
-from vialo.services.routes_client import RoutesClient, RoutesClientError
+from vialo.services.routes_client import RoutePoint, RoutesClient, RoutesClientError
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "docs" / "api-samples"
 
@@ -235,3 +235,114 @@ class TestRoutesClientRoutes:
         )
 
         assert len(result) == 4
+
+
+class TestPlaceIdWaypoints:
+    """Verified place IDs must reach the wire instead of raw coordinates.
+
+    Raw latLng is snapped by Google to the nearest routable edge, which in cities
+    with sparse pedestrian data puts a walking route on a car road. A placeId
+    waypoint routes from the establishment's own entrance.
+    """
+
+    @respx.mock
+    def test_matrix_sends_place_id_waypoints(self) -> None:
+        fixture = _load_matrix_fixture()
+        route = respx.post(
+            "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+        ).respond(200, json=fixture)
+
+        client = RoutesClient(api_key="test-key")
+        client.compute_route_matrix(
+            [RoutePoint(location=Location(latitude=45.0, longitude=12.0), place_id="ChIJorigin")],
+            [RoutePoint(location=Location(latitude=45.1, longitude=12.1), place_id="ChIJstop")],
+            "WALK",
+        )
+
+        sent_body = json.loads(route.calls[0].request.content)
+        assert sent_body["origins"][0]["waypoint"] == {"placeId": "ChIJorigin"}
+        assert sent_body["destinations"][0]["waypoint"] == {"placeId": "ChIJstop"}
+        assert "latLng" not in json.dumps(sent_body)
+
+    @respx.mock
+    def test_matrix_falls_back_to_coordinates_without_place_id(self) -> None:
+        fixture = _load_matrix_fixture()
+        route = respx.post(
+            "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+        ).respond(200, json=fixture)
+
+        client = RoutesClient(api_key="test-key")
+        client.compute_route_matrix(
+            [RoutePoint(location=Location(latitude=45.0, longitude=12.0))],
+            [Location(latitude=45.1, longitude=12.1)],
+            "WALK",
+        )
+
+        sent_body = json.loads(route.calls[0].request.content)
+        assert sent_body["origins"][0]["waypoint"]["location"]["latLng"]["latitude"] == 45.0
+        assert sent_body["destinations"][0]["waypoint"]["location"]["latLng"]["latitude"] == 45.1
+
+    @respx.mock
+    def test_walking_geometry_uses_place_ids_and_avoids_indoor(self) -> None:
+        mock_response = {
+            "routes": [
+                {
+                    "distanceMeters": 1000,
+                    "duration": "800s",
+                    "polyline": {"encodedPolyline": "abc"},
+                    "legs": [{"distanceMeters": 1000, "duration": "800s"}],
+                }
+            ]
+        }
+        route = respx.post("https://routes.googleapis.com/directions/v2:computeRoutes").respond(
+            200, json=mock_response
+        )
+
+        client = RoutesClient(api_key="test-key")
+        client.compute_routes(
+            origin=RoutePoint(location=Location(latitude=41.6, longitude=44.8), place_id="ChIJa"),
+            intermediates=[
+                RoutePoint(location=Location(latitude=41.61, longitude=44.81), place_id="ChIJb")
+            ],
+            destination=RoutePoint(
+                location=Location(latitude=41.62, longitude=44.82), place_id="ChIJc"
+            ),
+            travel_mode="WALK",
+        )
+
+        sent_body = json.loads(route.calls[0].request.content)
+        assert sent_body["origin"] == {"placeId": "ChIJa"}
+        assert sent_body["intermediates"] == [{"placeId": "ChIJb"}]
+        assert sent_body["destination"] == {"placeId": "ChIJc"}
+        assert sent_body["routeModifiers"] == {"avoidIndoor": True}
+        assert "routingPreference" not in sent_body
+
+    @respx.mock
+    def test_driving_geometry_keeps_traffic_unaware_and_no_indoor_modifier(self) -> None:
+        mock_response = {
+            "routes": [
+                {
+                    "distanceMeters": 1000,
+                    "duration": "300s",
+                    "polyline": {"encodedPolyline": "abc"},
+                    "legs": [{"distanceMeters": 1000, "duration": "300s"}],
+                }
+            ]
+        }
+        route = respx.post("https://routes.googleapis.com/directions/v2:computeRoutes").respond(
+            200, json=mock_response
+        )
+
+        client = RoutesClient(api_key="test-key")
+        client.compute_routes(
+            origin=RoutePoint(location=Location(latitude=41.6, longitude=44.8), place_id="ChIJa"),
+            intermediates=[],
+            destination=RoutePoint(
+                location=Location(latitude=41.62, longitude=44.82), place_id="ChIJc"
+            ),
+            travel_mode="DRIVE",
+        )
+
+        sent_body = json.loads(route.calls[0].request.content)
+        assert sent_body["routingPreference"] == "TRAFFIC_UNAWARE"
+        assert "routeModifiers" not in sent_body

@@ -15,6 +15,10 @@ VITE_GOOGLE_MAPS_BROWSER_KEY=replace-with-referrer-restricted-key npm run build
 
 `VITE_GOOGLE_MAPS_BROWSER_KEY` is the browser-only Maps JavaScript API key. Browser keys are visible to visitors by design, so restrict it to the production `https://vialo.place/*` referrer (and explicitly approved local development origins when needed) and enable only the Maps JavaScript API. Never use the Google server key here.
 
+`VITE_COGNITO_DOMAIN` is the Cognito hosted UI domain for Journal authentication (defaults to `vialo-place-journal.auth.us-east-1.amazoncognito.com`).
+
+`VITE_COGNITO_CLIENT_ID` is the Cognito app client ID (defaults to `6lue0pok3ga0qsnmk8knmcq82l`).
+
 The committed `src/lib/itinerary-response.schema.json` is generated from the backend Pydantic model. Backend and frontend tests fail if it drifts.
 
 ## Deployment

@@ -4,6 +4,7 @@ export default function SiteFooter() {
   return (
     <footer className="site-footer container" role="contentinfo">
       <nav aria-label="Footer navigation" className="footer-links">
+        <Link to="/journal">Journal</Link>
         <Link to="/privacy">Privacy</Link>
         <Link to="/terms">Terms</Link>
         <a

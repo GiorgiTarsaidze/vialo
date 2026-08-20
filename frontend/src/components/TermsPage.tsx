@@ -8,7 +8,8 @@ export default function TermsPage() {
         <p>
           Vialo is a free itinerary scheduling tool. It builds day schedules using real place
           data, opening hours, and travel times. Results are estimates and should be verified
-          on arrival.
+          on arrival. Vialo also hosts the Journal, where travellers publish written accounts of
+          days they have walked.
         </p>
       </section>
 
@@ -46,6 +47,36 @@ export default function TermsPage() {
           itinerary from the browser that created it. Once deleted or expired, the data
           cannot be recovered.
         </p>
+      </section>
+
+      <section>
+        <h2>Journal accounts and content</h2>
+        <ul>
+          <li>
+            Reading the Journal needs no account. Publishing a story, commenting, or reporting
+            requires one.
+          </li>
+          <li>
+            You keep ownership of what you write. By publishing, you grant Vialo permission to
+            display it publicly on this site for as long as you leave it published.
+          </li>
+          <li>
+            Publish only what is yours. Do not upload images or text you do not have the right to
+            share, and do not publish other people's personal information.
+          </li>
+          <li>
+            Stories cannot be edited after publication. You may delete your own stories and
+            comments at any time, and deletion is permanent.
+          </li>
+          <li>
+            Each account may publish 5 stories and 20 comments per day. Cover images are limited to
+            one per story, 2 MB, in JPEG, PNG, or WebP.
+          </li>
+          <li>
+            A story reported by 3 accounts is hidden from the site automatically. This is a
+            mechanical limit, not a judgement, and there is no appeal process.
+          </li>
+        </ul>
       </section>
 
       <section>

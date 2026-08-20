@@ -6,6 +6,7 @@ import ComparisonMap from './ComparisonMap';
 import ScheduledTimeline from './ScheduledTimeline';
 import DroppedStops from './DroppedStops';
 import ResultActions from './ResultActions';
+import CityStories from './CityStories';
 
 interface ResultViewProps {
   result: ItineraryResponse;
@@ -74,6 +75,9 @@ export default function ResultView({ result, readOnly, shareId, onShareDeleted }
           <DroppedStops drops={result.droppedStops} />
         )}
 
+        {/* City stories */}
+        <CityStories cityName={result.locality.name} />
+
         {/* Actions */}
         <ResultActions
           result={result}
@@ -81,6 +85,21 @@ export default function ResultView({ result, readOnly, shareId, onShareDeleted }
           shareId={shareId}
           onShareDeleted={onShareDeleted}
         />
+
+        {/* Publish as journal story */}
+        {!readOnly && (
+          <a
+            href="/journal/new"
+            className="result-publish-link"
+            onClick={(e) => {
+              e.preventDefault();
+              sessionStorage.setItem('vialo.journal.draft_itinerary', JSON.stringify(result));
+              window.location.href = '/journal/new';
+            }}
+          >
+            Publish this day as a story
+          </a>
+        )}
       </div>
 
       <style>{styles}</style>
@@ -148,5 +167,28 @@ const styles = `
     position: sticky;
     top: var(--space-5);
   }
+}
+
+.result-publish-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: var(--space-3) var(--space-5);
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: var(--radius-input);
+  text-decoration: none;
+  text-align: center;
+  color: var(--color-ink);
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border-strong);
+  max-width: 480px;
+  transition: background var(--duration-fast) ease;
+}
+
+.result-publish-link:hover {
+  background: var(--color-surface);
+  color: var(--color-ink);
 }
 `;

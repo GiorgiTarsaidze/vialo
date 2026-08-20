@@ -125,7 +125,7 @@ The engine must never invent a place, opening interval, route, visit duration pr
 
 4.4. OTHERWISE, WHEN the requested date is outside current-hours coverage and `regularOpeningHours` has usable periods for the requested local weekday, THE SYSTEM SHALL use those periods and mark the source `regular`.
 
-4.5. WHEN neither source is usable, THE SYSTEM SHALL exclude the stop with `HOURS_UNAVAILABLE`. It SHALL NOT assume all-day availability.
+4.5. WHEN neither source is usable, THE SYSTEM SHALL retain the stop with `hoursSource` `unverified` and a single open interval equal to the user's requested scheduling window, and SHALL surface that provenance in the response and UI. It SHALL NOT synthesize 00:00–24:00 availability, SHALL NOT describe the stop as open, and SHALL NOT apply this behavior to `CLOSED_ON_DATE`, which remains an exclusion. (Amended 2026-08-20: previously the stop was excluded with `HOURS_UNAVAILABLE`. Live Tbilisi runs excluded genuinely worthwhile stops such as a fortress that Google simply has no hours for. Retaining the stop with explicit unverified provenance keeps the schedule useful while leaving the judgement to the user; `HOURS_UNAVAILABLE` remains a diagnostic code for repair decisions and for stops the bounded repair pass cannot resolve.)
 
 4.6. THE parser SHALL support multiple opening intervals on one date, intervals crossing midnight, 24-hour places, truncated current periods, and intervals whose close date differs from the open date.
 
@@ -294,7 +294,7 @@ The engine must never invent a place, opening interval, route, visit duration pr
 The requirements are approved for implementation only when reviewers confirm:
 
 - day-does-not-fit behavior is deterministic and visible;
-- missing hours never become assumed availability;
+- missing hours never become assumed availability, and a stop kept without published hours carries visible `unverified` provenance;
 - place-not-found and off-topic requests have explicit outcomes;
 - timezone arithmetic uses `places.timeZone.id`;
 - visit-duration provenance and bounds are explicit;

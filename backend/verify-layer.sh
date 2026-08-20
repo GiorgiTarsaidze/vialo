@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAYER_DIR="${SCRIPT_DIR}/layer"
 PYTHON_DIR="${LAYER_DIR}/python"
 
-for package in pydantic aws_lambda_powertools httpx boto3; do
+for package in pydantic aws_lambda_powertools httpx boto3 jwt cryptography; do
     test -d "${PYTHON_DIR}/${package}"
 done
 test ! -e "${PYTHON_DIR}/vialo"
@@ -24,7 +24,9 @@ while IFS= read -r -d '' extension; do
     description="$(file "${extension}")"
     printf '%s\n' "${description}"
     printf '%s' "${description}" | grep -Eq 'ARM aarch64|ARM64'
-    basename "${extension}" | grep -q 'cpython-312'
+    # Accept both the CPython 3.12 ABI tag and the stable abi3 tag: PyJWT's
+    # cryptography backend ships a single abi3 extension that is valid on 3.12.
+    basename "${extension}" | grep -Eq 'cpython-312|abi3'
 done < <(find "${PYTHON_DIR}" -type f -name '*.so' -print0)
 test "${native_count}" -gt 0
 

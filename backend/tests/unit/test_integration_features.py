@@ -477,8 +477,12 @@ class TestGeometryHandoffWithDestination:
         assert geom.polyline == "abc123"
         # All stops should be intermediates, destination is the endpoint
         call_args = mock_client.compute_routes.call_args
-        assert call_args.kwargs["destination"] == dest.location
+        # Waypoints carry the verified place ID, not raw coordinates, so Google
+        # routes from the real entrance instead of snapping to the nearest edge.
+        assert call_args.kwargs["destination"].place_id == dest.place_id
+        assert call_args.kwargs["destination"].location == dest.location
         assert len(call_args.kwargs["intermediates"]) == 2
+        assert [p.place_id for p in call_args.kwargs["intermediates"]] == ["s0", "s1"]
 
     def test_handoff_with_destination(self) -> None:
         """Maps handoff uses destination as endpoint."""

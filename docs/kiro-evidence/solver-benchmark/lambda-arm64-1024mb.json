@@ -1,0 +1,92 @@
+{
+    "environment": {
+        "python": "3.12.13",
+        "machine": "aarch64",
+        "platform": "Linux-5.10.255-260-301.1061.amzn2.aarch64-aarch64-with-glibc2.34",
+        "lambdaFunction": "vialo-solver-benchmark-temp",
+        "lambdaMemoryMb": "1024",
+        "measuredAt": "2026-08-20T10:03:53+00:00"
+    },
+    "matrixSeed": 20260820,
+    "repeats": 3,
+    "results": [
+        {
+            "stops": 8,
+            "case": "unconstrained",
+            "permutations": 40320,
+            "solutionFound": true,
+            "droppedStops": 0,
+            "samples": 3,
+            "warmupSeconds": 0.5572,
+            "minSeconds": 0.5443,
+            "medianSeconds": 0.5581,
+            "p95Seconds": 0.5741,
+            "maxSeconds": 0.5741
+        },
+        {
+            "stops": 8,
+            "case": "realistic",
+            "permutations": 40320,
+            "solutionFound": true,
+            "droppedStops": 0,
+            "samples": 3,
+            "warmupSeconds": 0.3641,
+            "minSeconds": 0.3665,
+            "medianSeconds": 0.3756,
+            "p95Seconds": 0.3775,
+            "maxSeconds": 0.3775
+        },
+        {
+            "stops": 8,
+            "case": "dropping",
+            "permutations": 40320,
+            "solutionFound": true,
+            "droppedStops": 3,
+            "samples": 3,
+            "warmupSeconds": 0.6586,
+            "minSeconds": 0.6402,
+            "medianSeconds": 0.6415,
+            "p95Seconds": 0.6588,
+            "maxSeconds": 0.6588
+        },
+        {
+            "stops": 9,
+            "case": "unconstrained",
+            "permutations": 362880,
+            "solutionFound": true,
+            "droppedStops": 0,
+            "samples": 3,
+            "warmupSeconds": 5.4847,
+            "minSeconds": 5.4767,
+            "medianSeconds": 5.5,
+            "p95Seconds": 5.5149,
+            "maxSeconds": 5.5149
+        },
+        {
+            "stops": 9,
+            "case": "realistic",
+            "permutations": 362880,
+            "solutionFound": false,
+            "droppedStops": 0,
+            "samples": 3,
+            "warmupSeconds": 3.3403,
+            "minSeconds": 3.3382,
+            "medianSeconds": 3.3404,
+            "p95Seconds": 3.3621,
+            "maxSeconds": 3.3621
+        },
+        {
+            "stops": 9,
+            "case": "dropping",
+            "permutations": 362880,
+            "solutionFound": true,
+            "droppedStops": 4,
+            "samples": 3,
+            "warmupSeconds": 5.763,
+            "minSeconds": 5.7602,
+            "medianSeconds": 5.7643,
+            "p95Seconds": 5.7967,
+            "maxSeconds": 5.7967
+        }
+    ]
+}

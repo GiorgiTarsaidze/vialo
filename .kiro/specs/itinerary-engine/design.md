@@ -191,7 +191,7 @@ Production Places Text Search requests include `places.timeZone`. The `timeZone.
 3. If the requested date is outside that window, select `regularOpeningHours.periods` by the requested local weekday and mark source `regular`.
 4. Pair opening and closing endpoints chronologically, including next-date closing points and 24-hour periods.
 5. Retain every usable interval for split-day schedules.
-6. Return `HOURS_UNAVAILABLE` for missing or malformed data outside authoritative current coverage.
+6. Return `HOURS_UNAVAILABLE` for missing or malformed data outside authoritative current coverage. The pipeline then retains the stop with `hoursSource` `unverified` over the user's requested window (see requirement 4.5); the normalizer itself never invents an interval.
 
 A visit is feasible only when one interval can contain its entire duration. An arrival before an interval creates a wait; an arrival after the final possible interval rejects that order.
 
@@ -573,6 +573,6 @@ Run 8! and 9! representative schedules in Python 3.12 at the configured Lambda m
 - **Time Zone API:** unnecessary because Places now returns an IANA `timeZone.id` in the same grounding response.
 - **Mirroring the matrix:** invalidated by the real directed fixture.
 - **Straight-line map overlays:** not route evidence.
-- **Assuming missing hours mean open:** violates evidence and can send users to a closed place.
+- **Assuming missing hours mean open:** violates evidence and can send users to a closed place. A stop with no published hours is retained only with visible `unverified` provenance over the user's own window, never described as open.
 - **Automatically storing every result:** unnecessary data retention; sharing is explicit.
 - **Silently shortening the Maps URL:** changes the solved itinerary.

@@ -13,6 +13,9 @@ def test_resources_are_vialo_named_and_environment_tagged() -> None:
         "vialo-shared-itineraries-dev",
         "vialo-request-limits-dev",
         "vialo-frontend-${AWS::AccountId}-${AWS::Region}-dev",
+        "vialo-journal-dev",
+        "vialo-journal-media-${AWS::AccountId}-${AWS::Region}-dev",
+        "vialo-journal-autoconfirm-dev",
     ):
         assert name in TEMPLATE
     assert TEMPLATE.count("Project: vialo") >= 2
@@ -22,13 +25,41 @@ def test_resources_are_vialo_named_and_environment_tagged() -> None:
 
 
 def test_cost_and_retention_defaults_are_bounded() -> None:
-    assert TEMPLATE.count("BillingMode: PAY_PER_REQUEST") == 3
-    assert TEMPLATE.count("PointInTimeRecoveryEnabled: false") == 3
+    # Four on-demand tables: place cache, shares, rate limits, and the Journal.
+    assert TEMPLATE.count("BillingMode: PAY_PER_REQUEST") == 4
+    assert TEMPLATE.count("PointInTimeRecoveryEnabled: false") == 4
     assert TEMPLATE.count("RetentionInDays: 7") == 2
     assert "ProvisionedConcurrency" not in TEMPLATE
     assert "ReservedConcurrentExecutions" not in TEMPLATE
-    assert "MemorySize: 512" in TEMPLATE
+    # 1769 MB is one full vCPU, selected from the deployed ARM64 solver benchmark
+    # in docs/kiro-evidence/solver-benchmark/. At 512 MB the worst-case 9-stop
+    # search plus progressive dropping measured 11.98 s, which does not leave
+    # room for provider latency inside the 30 s API Gateway budget.
+    assert "MemorySize: 1769" in TEMPLATE
     assert "Timeout: 30" in TEMPLATE
+    # The Journal sign-up trigger stays tiny and short-lived.
+    assert "MemorySize: 128" in TEMPLATE
+
+
+def test_journal_storage_is_private_and_separately_indexed() -> None:
+    """Journal media is readable only through CloudFront, and never public."""
+    assert TEMPLATE.count("BlockPublicAcls: true") == 2
+    assert TEMPLATE.count("RestrictPublicBuckets: true") == 2
+    assert "AllowCloudFrontOACRead" in TEMPLATE
+    for index in ("IndexName: gsi1", "IndexName: gsi2", "IndexName: gsi3"):
+        assert index in TEMPLATE
+    # Listing indexes must not project the story body or an attached itinerary.
+    assert "ProjectionType: INCLUDE" in TEMPLATE
+    assert "- body" not in TEMPLATE
+    assert "- itinerary" not in TEMPLATE
+
+
+def test_journal_writes_require_authorization_and_least_privilege() -> None:
+    assert "- Authorization" in TEMPLATE
+    assert "s3:PutObject" in TEMPLATE
+    # The function may create cover objects only; it can never read or delete them.
+    assert "s3:GetObject\n                Resource" not in TEMPLATE
+    assert "covers/*" in TEMPLATE
 
 
 def test_permissions_cover_only_required_logs_and_dynamodb_operations() -> None:

@@ -9,7 +9,13 @@ import pytest
 from pydantic import ValidationError
 
 from vialo.models.diagnostics import Diagnostic, DiagnosticCode, DroppedStop
-from vialo.models.providers import CandidateStop, Location, ParsedIntent, StopCategory
+from vialo.models.providers import (
+    CandidateStop,
+    DurationEvidence,
+    Location,
+    ParsedIntent,
+    StopCategory,
+)
 from vialo.models.requests import PlanItineraryRequest
 
 
@@ -220,3 +226,75 @@ class TestParsedIntent:
         reconstructed = ParsedIntent.model_validate_json(json_str)
         assert reconstructed.locality_query == "Venice"
         assert reconstructed.candidates[0].category == StopCategory.HISTORIC_RELIGIOUS_SITE
+
+
+class TestModelAuthoredStringsAreBounded:
+    """Model-authored text that can reach the UI or a share must be length-bounded.
+
+    The scope guard is a spend filter, not an injection filter: a prompt that
+    keeps place and time signals reaches Bedrock even when it also carries an
+    injection attempt. Grounded stop names always come from Google Places, but
+    the locality label and a dropped candidate's name are model-authored, are
+    rendered (escaped) in the UI, and can persist inside an anonymous share.
+    Bounding them keeps a hostile prompt from planting a wall of text.
+    """
+
+    def _candidate(self, name: str = "San Marco") -> CandidateStop:
+        return CandidateStop(
+            candidate_index=0,
+            name=name,
+            category=StopCategory.LANDMARK,
+            priority=1,
+            visit_duration_minutes=45,
+            duration_source="model_estimate",
+        )
+
+    def _intent(self, **overrides: object) -> ParsedIntent:
+        payload: dict[str, object] = {
+            "locality_query": "Venice",
+            "origin_query": "Hotel Danieli",
+            "local_start_time": dt.time(9, 0),
+            "local_end_time": dt.time(17, 0),
+            "travel_mode": "WALK",
+            "return_to_origin": True,
+            "candidates": [self._candidate()],
+        }
+        payload.update(overrides)
+        return ParsedIntent.model_validate(payload)
+
+    def test_candidate_name_rejects_overlong_value(self) -> None:
+        with pytest.raises(ValidationError):
+            self._candidate("A" * 121)
+
+    def test_candidate_name_rejects_empty_value(self) -> None:
+        with pytest.raises(ValidationError):
+            self._candidate("")
+
+    def test_candidate_name_accepts_realistic_length(self) -> None:
+        assert self._candidate("Basilica di Santa Maria Gloriosa dei Frari").name
+
+    def test_locality_query_rejects_overlong_value(self) -> None:
+        with pytest.raises(ValidationError):
+            self._intent(locality_query="V" * 121)
+
+    def test_origin_query_rejects_overlong_value(self) -> None:
+        with pytest.raises(ValidationError):
+            self._intent(origin_query="O" * 201)
+
+    def test_locality_and_origin_reject_empty_values(self) -> None:
+        with pytest.raises(ValidationError):
+            self._intent(locality_query="")
+        with pytest.raises(ValidationError):
+            self._intent(origin_query="")
+
+    def test_duration_evidence_quote_cannot_exceed_prompt_cap(self) -> None:
+        with pytest.raises(ValidationError):
+            DurationEvidence(start=0, end=501, quote="q" * 501)
+
+    def test_injected_text_within_bounds_is_still_only_data(self) -> None:
+        """A short injected locality is accepted as data, never as an instruction."""
+        intent = self._intent(locality_query="Venice<script>alert(1)</script>")
+        # No escaping happens server-side; the value stays an inert string that
+        # React escapes on render, and it is short enough to be harmless.
+        assert intent.locality_query.startswith("Venice")
+        assert len(intent.locality_query) <= 120

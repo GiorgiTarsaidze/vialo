@@ -5,6 +5,12 @@ import { MemoryRouter } from 'react-router-dom';
 import InputHero from '../src/components/InputHero';
 import { getMarkerMeta, getMarkerTitle, buildMarkerSvg } from '../src/lib/marker-helpers';
 import { useFullscreen } from '../src/hooks/use-fullscreen';
+import {
+  naiveLineOptions,
+  optimizedLineOptions,
+  NAIVE_STROKE,
+  OPTIMIZED_STROKE,
+} from '../src/lib/map-lines';
 import type { StopCategory } from '../src/lib/types';
 
 // Mock google maps
@@ -294,5 +300,55 @@ describe('Fullscreen map control', () => {
 
     await user.click(screen.getByRole('button', { name: 'View map full screen' }));
     await waitFor(() => expect(onResize).toHaveBeenCalled());
+  });
+});
+
+describe('comparison map line options', () => {
+  const path = [
+    { lat: 40.8, lng: 14.2 },
+    { lat: 40.81, lng: 14.21 },
+  ];
+
+  it('draws the naive baseline above the optimized route so overlaps stay visible', () => {
+    const naive = naiveLineOptions(path) as { zIndex: number };
+    const optimized = optimizedLineOptions(path) as { zIndex: number };
+    expect(naive.zIndex).toBeGreaterThan(optimized.zIndex);
+  });
+
+  it('distinguishes the two routes by weight and dash pattern, not color alone', () => {
+    const naive = naiveLineOptions(path) as {
+      strokeOpacity: number;
+      strokeWeight: number;
+      icons: Array<{ icon: { strokeColor: string; strokeOpacity: number }; repeat: string }>;
+    };
+    const optimized = optimizedLineOptions(path) as {
+      strokeOpacity: number;
+      strokeWeight: number;
+      icons?: unknown;
+    };
+
+    // Dashed baseline: transparent base stroke plus repeated dash symbols.
+    expect(naive.strokeOpacity).toBe(0);
+    expect(naive.icons).toHaveLength(1);
+    const dash = naive.icons[0]!;
+    expect(dash.icon.strokeColor).toBe(NAIVE_STROKE);
+    expect(dash.repeat).toMatch(/px$/);
+
+    // Solid, heavier optimized route with no dash symbols.
+    expect(optimized.strokeOpacity).toBe(1);
+    expect(optimized.icons).toBeUndefined();
+    expect(optimized.strokeWeight).toBeGreaterThan(naive.strokeWeight);
+  });
+
+  it('uses the design-system route colors', () => {
+    expect(NAIVE_STROKE).toBe('#a95242');
+    expect(OPTIMIZED_STROKE).toBe('#6f3e59');
+    expect((naiveLineOptions(path) as { strokeColor: string }).strokeColor).toBe(NAIVE_STROKE);
+    expect((optimizedLineOptions(path) as { strokeColor: string }).strokeColor).toBe(OPTIMIZED_STROKE);
+  });
+
+  it('keeps both routes on the supplied path so bounds and scale match', () => {
+    expect((naiveLineOptions(path) as { path: unknown }).path).toBe(path);
+    expect((optimizedLineOptions(path) as { path: unknown }).path).toBe(path);
   });
 });

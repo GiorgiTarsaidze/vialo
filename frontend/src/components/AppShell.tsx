@@ -31,6 +31,7 @@ export default function AppShell({ children, onNewDay, showBack }: AppShellProps
           />
           <span className="wordmark-text">vialo.</span>
         </Link>
+        <Link to="/journal" className="header-nav-link">Journal</Link>
       </header>
       <main id="main-content" className="app-main container" role="main" tabIndex={-1}>
         {children}
@@ -113,6 +114,24 @@ const styles = `
 
 .back-button:hover {
   color: var(--color-ink);
+}
+
+.header-nav-link {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink-muted);
+  text-decoration: none;
+  min-height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-input);
+  transition: color var(--duration-fast) ease;
+}
+
+.header-nav-link:hover {
+  color: var(--color-primary);
 }
 
 .app-main {

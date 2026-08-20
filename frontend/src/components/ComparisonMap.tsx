@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import type { ComparisonResult, GroundedStop, GroundedPlace } from '../lib/types';
 import { decodePolyline } from '../lib/format';
 import { getMarkerMeta, getMarkerTitle, buildMarkerSvg } from '../lib/marker-helpers';
+import { naiveLineOptions, optimizedLineOptions } from '../lib/map-lines';
 import { useFullscreen } from '../hooks/use-fullscreen';
 import {
   MAPS_AUTH_FAILURE_EVENT,
@@ -76,12 +77,9 @@ export default function ComparisonMap({ comparison, stops, origin, destination }
 
     if (isSameOrder) {
       new google.maps.Polyline({
-        path: optimizedPath,
-        strokeColor: '#6f3e59',
-        strokeOpacity: 1,
-        strokeWeight: 5,
+        ...optimizedLineOptions(optimizedPath),
         map,
-      });
+      } as google.maps.PolylineOptions);
     } else if (prefersReducedMotion || hasRevealedRef.current) {
       drawNaiveLine(map, naivePath);
       drawOptimizedLine(map, optimizedPath);
@@ -290,29 +288,16 @@ export default function ComparisonMap({ comparison, stops, origin, destination }
 
 function drawNaiveLine(map: google.maps.Map, path: Array<{ lat: number; lng: number }>): google.maps.Polyline {
   return new google.maps.Polyline({
-    path,
-    strokeColor: '#a95242',
-    strokeOpacity: 0.62,
-    strokeWeight: 3,
-    geodesic: true,
-    icons: [{
-      icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-      offset: '0',
-      repeat: '20px',
-    }],
+    ...naiveLineOptions(path),
     map,
-  });
+  } as google.maps.PolylineOptions);
 }
 
 function drawOptimizedLine(map: google.maps.Map, path: Array<{ lat: number; lng: number }>): google.maps.Polyline {
   return new google.maps.Polyline({
-    path,
-    strokeColor: '#6f3e59',
-    strokeOpacity: 1,
-    strokeWeight: 5,
-    geodesic: true,
+    ...optimizedLineOptions(path),
     map,
-  });
+  } as google.maps.PolylineOptions);
 }
 
 const styles = `

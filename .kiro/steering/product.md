@@ -28,14 +28,17 @@ Any chatbot can emit a Google Maps URL. That was tested and confirmed. The link 
 
 3. **Make the day fit.** Explicit visit-duration estimates + real opening hours + real travel times = a schedule that either works or gets explicitly diagnosed. "This is 6.5 hours of walking; you have 5 — here's what I cut, and here's why stop 7 moved earlier." A chatbot silently produces a broken day and confidently tells you it's fine.
 
-## Frozen scope — 4 features, nothing else
+## Frozen scope — 5 features, nothing else
 
 1. **Prompt → grounded, scheduled itinerary.** Places-verified stops, opening hours respected, infeasible days diagnosed rather than silently broken.
 2. **Exact route optimization with a visible naive-vs-optimized comparison.** The single highest-leverage element — it answers "why not just ask ChatGPT?" visually in four seconds.
 3. **Timeline view + map preview.** Arrival/departure times, walking legs, "opens 09:30" annotations. This is what makes Vialo visibly different from a chat response.
-4. **Open in Google Maps + anonymous share permalinks.** `vialo.place/r/<id>` — no accounts, no sign-up.
+4. **Open in Google Maps + anonymous share permalinks.** `vialo.place/r/<id>`, readable with no account and no sign-up.
+5. **Vialo Journal.** Travellers publish what a day in a city was actually like, optionally attaching the itinerary Vialo computed for them. Reading is anonymous; publishing, commenting, and reporting need an account. Specified in [`../specs/journal/`](../specs/journal/).
 
 If something would improve the product but isn't in this list, it goes in the README's "Future" section. It does not get built. Scope creep is the most likely way this project fails to ship.
+
+**Amendment, 2026-08-20.** This list said 4 features until the Journal shipped. The count changed because the product needed a reason for a traveller to come back after their day was planned, and a route nobody else ever sees is a dead end. Recording the amendment here, with its date, is the point: the scope freeze is a real constraint, so widening it is an event rather than an edit. The Journal is the only feature in this repository whose specification was written after its code, which is recorded in `KIRO.md` rather than smoothed over.
 
 ## Language discipline
 
@@ -49,7 +52,8 @@ If something would improve the product but isn't in this list, it goes in the RE
 
 - **Nothing simulated.** No hard-coded results presented as working features, no mock data standing in for a real integration. A judge running the app must get genuinely computed output. This is pass/fail in Round One.
 - **Zero learning curve.** A judge lands on it, understands it in 5 seconds, gets value in 30.
-- **Free during judging.** No accounts, no payment. Rate-limited and jailbreak-hardened.
+- **Free during judging.** No payment, ever. Planning a day needs no account and never will: a judge lands on the site and gets a computed itinerary without signing up for anything. Publishing to the Journal is the single exception, because attributing written content to a person is the whole point of it. Amended 2026-08-20; this principle read "No accounts, no payment" until the Journal shipped.
+- **Accounts hold as little as possible.** Identity lives in Cognito. The Journal table stores an opaque subject and a display name, never an email address. No profile pages, no follows, no notifications.
 - **Maximum 9 visit stops.** This keeps the fixed-origin exact solver bounded at 9! and the directed matrix at 10×10. Google Maps platform-specific waypoint limits are handled explicitly with a full URL plus browser-safe route parts—never by silently dropping stops.
 - **English only** in all code, docs, and UI.
 - **No real API keys, secrets, or credentials in any committed file.** This is a disqualification trigger.

@@ -191,3 +191,32 @@ def collect_alternatives(
             alternatives[diag.candidate_index] = []
 
     return alternatives
+
+
+def build_top_up_context(
+    *,
+    locality: str,
+    travel_mode: str,
+    local_start: str,
+    local_end: str,
+    requested_date: str,
+    accepted_names: list[str],
+    rejected_names: list[str],
+    wanted: int,
+) -> str:
+    """Describe the thin day so the selector can propose replacement stops.
+
+    Contains no user prompt text and no provider bodies: only the locality, the
+    window, what is already scheduled, and what must not be repeated.
+    """
+    payload = {
+        "locality": locality,
+        "travel_mode": travel_mode,
+        "date": requested_date,
+        "local_start_time": local_start,
+        "local_end_time": local_end,
+        "already_accepted": accepted_names,
+        "do_not_repeat": rejected_names,
+        "candidates_wanted": wanted,
+    }
+    return json.dumps(payload, ensure_ascii=False)

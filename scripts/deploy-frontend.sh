@@ -7,6 +7,11 @@ set -euo pipefail
 #
 # Required environment variables:
 #   VITE_GOOGLE_MAPS_BROWSER_KEY — referrer-restricted Maps JS API key (build time only)
+#
+# Optional environment variables (Journal sign-in; both are public client config
+# and both have committed defaults in src/lib/cognito.ts):
+#   VITE_COGNITO_DOMAIN    — Cognito hosted UI domain
+#   VITE_COGNITO_CLIENT_ID — Cognito app client id
 #   FRONTEND_BUCKET_NAME         — S3 bucket name (e.g. vialo-frontend-123456789012-us-east-1-dev)
 #   FRONTEND_DISTRIBUTION_ID     — CloudFront distribution ID
 #
@@ -29,7 +34,10 @@ DIST_DIR="$FRONTEND_DIR/dist"
 echo "==> Building frontend..."
 cd "$FRONTEND_DIR"
 npm ci --silent
-VITE_GOOGLE_MAPS_BROWSER_KEY="$VITE_GOOGLE_MAPS_BROWSER_KEY" npm run build
+VITE_GOOGLE_MAPS_BROWSER_KEY="$VITE_GOOGLE_MAPS_BROWSER_KEY" \
+  VITE_COGNITO_DOMAIN="${VITE_COGNITO_DOMAIN:-}" \
+  VITE_COGNITO_CLIENT_ID="${VITE_COGNITO_CLIENT_ID:-}" \
+  npm run build
 
 if [ ! -d "$DIST_DIR" ]; then
   echo "Error: Build output not found at $DIST_DIR"

@@ -187,6 +187,16 @@ SHARE_DELETION_SECRET=replace-with-random-value
 POWERTOOLS_SERVICE_NAME=vialo-api
 LOG_LEVEL=INFO
 AWS_REGION=us-east-1
+DYNAMODB_TABLE_BLOG=vialo-journal
+MEDIA_BUCKET=vialo-journal-media
+MEDIA_BASE_URL=/media
+COGNITO_USER_POOL_ID=replace-after-deploy
+COGNITO_CLIENT_ID=replace-after-deploy
+COGNITO_REGION=us-east-1
+VITE_COGNITO_DOMAIN=replace-after-deploy.auth.us-east-1.amazoncognito.com
+VITE_COGNITO_CLIENT_ID=replace-after-deploy
 ```
+
+The two `VITE_` values are build-time frontend configuration, not secrets: the Cognito app client has no secret and its redirect URI is pinned in the user pool. Journal variables load through `load_blog_config()`, which is deliberately separate from `load_config()` so that neither feature can break the other by being unconfigured. Added 2026-08-20 with the Journal.
 
 `KIRO_API_KEY` is intentionally absent. It authenticates headless Kiro CLI automation and is not a documented model-provider credential for deployed application inference.

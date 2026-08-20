@@ -27,6 +27,45 @@ class Config:
     log_level: str
 
 
+@dataclass(frozen=True)
+class BlogConfig:
+    """Vialo Journal configuration.
+
+    Separate from Config because the planning pipeline must keep working even if
+    the Journal is not configured, and vice versa.
+    """
+
+    dynamodb_table_blog: str
+    media_bucket: str
+    media_base_url: str
+    cognito_user_pool_id: str
+    cognito_client_id: str
+    cognito_region: str
+
+
+def load_blog_config() -> BlogConfig:
+    """Load Journal configuration from environment variables.
+
+    Raises ValueError when a required variable is missing, which the API turns
+    into a typed 503 rather than a stack trace.
+    """
+
+    def _need(name: str) -> str:
+        value = os.environ.get(name)
+        if not value:
+            raise ValueError(f"Missing required environment variable: {name}")
+        return value
+
+    return BlogConfig(
+        dynamodb_table_blog=_need("DYNAMODB_TABLE_BLOG"),
+        media_bucket=_need("MEDIA_BUCKET"),
+        media_base_url=os.environ.get("MEDIA_BASE_URL", "/media"),
+        cognito_user_pool_id=_need("COGNITO_USER_POOL_ID"),
+        cognito_client_id=_need("COGNITO_CLIENT_ID"),
+        cognito_region=os.environ.get("COGNITO_REGION", os.environ.get("AWS_REGION", "us-east-1")),
+    )
+
+
 def load_config() -> Config:
     """Load configuration from environment variables.
 

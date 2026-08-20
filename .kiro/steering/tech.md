@@ -44,7 +44,7 @@ The validated Places response contains no typical-visit-duration field. Visit du
 
 Use `timeZone.id` rather than `utcOffsetMinutes`. The former is an IANA timezone that supports requested-date daylight-saving arithmetic; the latter is only the place's current offset.
 
-For opening hours, derive the documented seven-local-date coverage window from the `currentOpeningHours` fetch date in the place timezone. When the requested date is inside that window, use its intersecting current periods; no usable period means explicitly closed and must not fall back to recurring hours. Only dates outside that coverage may use `regularOpeningHours` for the local weekday. If neither source is usable, invoke the specified missing-hours behavior rather than inventing availability.
+For opening hours, derive the documented seven-local-date coverage window from the `currentOpeningHours` fetch date in the place timezone. When the requested date is inside that window, use its intersecting current periods; no usable period means explicitly closed and must not fall back to recurring hours. Only dates outside that coverage may use `regularOpeningHours` for the local weekday. When neither source is usable, never invent hours: retain the stop with `hoursSource` `unverified` and one interval equal to the user's requested window, and show that provenance in the UI so the schedule stays honest about what was verified. An explicit closure on the requested date remains an exclusion.
 
 Results are **cached in DynamoDB** as separately expiring profile, regular-hours, and date-specific-hours items. Application code checks expiry before use because DynamoDB TTL cleanup is asynchronous; never serve stale hours merely because coordinates remain valid.
 

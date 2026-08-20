@@ -21,6 +21,7 @@ from aws_lambda_powertools.event_handler import Response, content_types
 from pydantic import ValidationError
 
 from vialo.config import load_config
+from vialo.domain.candidate_targets import MAX_STOPS, is_complete_day, top_up_shortfall
 from vialo.domain.comparison import build_comparison
 from vialo.domain.maps_url import build_handoff
 from vialo.domain.naive_simulation import simulate_naive_order
@@ -41,6 +42,7 @@ from vialo.pipeline.compute_route_geometry import RouteGeometry, compute_route_g
 from vialo.pipeline.ground_places import GroundingDiagnostic, ground_origin, ground_places
 from vialo.pipeline.repair_candidates import (
     build_repair_context,
+    build_top_up_context,
     collect_alternatives,
     parse_repair_decisions,
 )
@@ -856,6 +858,76 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
         # Re-sort grounded stops after repair
         grounded_stops.sort(key=lambda stop: stop.candidate_index)
 
+    # --- Top-up pass: a window that can hold more must not return a thin day ---
+    # Grounding can honestly exclude several candidates at once. Without this
+    # pass a four-hour day could return one stop and a list of failures, which is
+    # useless to the user even though every exclusion was correct.
+    shortfall = top_up_shortfall(len(grounded_stops), window_start, window_end)
+    if shortfall > 0:
+        top_up_started = time.perf_counter()
+        try:
+            rejected_names = [
+                diag.name
+                for diag in grounding_diagnostics
+                if diag.code != DiagnosticCode.CANDIDATE_REPAIRED
+            ]
+            accepted_names = [stop.name for stop in grounded_stops]
+            # Continue after every index the model already used so a top-up
+            # stop can never collide with a dropped candidate in diagnostics.
+            next_index = (
+                max(
+                    max((stop.candidate_index for stop in grounded_stops), default=-1),
+                    max((c.candidate_index for c in intent.candidates), default=-1),
+                )
+                + 1
+            )
+            top_up_context = build_top_up_context(
+                locality=intent.locality_query,
+                travel_mode=intent.travel_mode,
+                local_start=intent.local_start_time.strftime("%H:%M"),
+                local_end=intent.local_end_time.strftime("%H:%M"),
+                requested_date=requested_date.isoformat(),
+                accepted_names=accepted_names,
+                rejected_names=rejected_names,
+                wanted=shortfall,
+            )
+            extra_candidates = selector.top_up(top_up_context, next_index)
+            if extra_candidates:
+                extra_stops, _extra_diagnostics = ground_places(
+                    candidates=extra_candidates,
+                    locality=intent.locality_query,
+                    client=places_client,
+                    requested_date=requested_date,
+                    cache=place_cache,
+                    origin_tz=origin_tz,
+                    window_start=window_start,
+                    window_end=window_end,
+                )
+                # A top-up candidate that also fails is simply not mentioned: the
+                # user never asked for it, so it is not a dropped stop.
+                existing_place_ids = {stop.place.place_id for stop in grounded_stops}
+                added = 0
+                for stop in extra_stops:
+                    if len(grounded_stops) >= MAX_STOPS:
+                        break
+                    if stop.place.place_id in existing_place_ids:
+                        continue
+                    if stop.place.place_id == canonical_origin.place_id:
+                        continue
+                    grounded_stops.append(stop)
+                    existing_place_ids.add(stop.place.place_id)
+                    added += 1
+                if added:
+                    metrics.add_metric(name="CandidateTopUpAdded", unit="Count", value=added)
+                    grounded_stops.sort(key=lambda stop: stop.candidate_index)
+        except (BudgetExceededError, SpendLimiterUnavailableError, SelectorError):
+            # A thin day is still a usable day; never fail the request for this.
+            logger.info("Top-up pass unavailable")
+        except (PlacesClientError, ValidationError):
+            logger.warning("Top-up grounding failed")
+        finally:
+            _record_latency("TopUpLatency", top_up_started)
+
     # Close places client after all grounding/repair
     places_client.close()
 
@@ -1068,13 +1140,13 @@ def plan_itinerary() -> Response:  # type: ignore[type-arg]
     # Build response
     request_id = str(uuid.uuid4())
 
-    # Status is "partial" when ANY grounding exclusion OR solver drop exists
-    has_drops = len(dropped) > 0
-    # Simpler: partial if there are failure diagnostics or drops
-    failure_diags = [
-        d for d in grounding_diagnostics if d.code != DiagnosticCode.CANDIDATE_REPAIRED
-    ]
-    itinerary_status: str = "partial" if (failure_diags or has_drops) else "complete"
+    # "complete" means the scheduled day fills its window. Unused spare ideas and
+    # honestly excluded candidates are reported as suggestions, and they no longer
+    # downgrade a day that is genuinely full: a six-stop day is not partial just
+    # because a seventh idea did not fit.
+    itinerary_status: str = (
+        "complete" if is_complete_day(len(ordered_stops), window_start, window_end) else "partial"
+    )
 
     # Build diagnostics
     response_diagnostics_list: list[Diagnostic] = []

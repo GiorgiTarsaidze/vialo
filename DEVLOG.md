@@ -263,3 +263,302 @@ The Cloudflare root record is not yet configured. Add a DNS-only root CNAME/flat
 - Repository validation, ignored-artifact checks, diff checks, and pending-diff secret scanning pass; credentials, private notes/logo source, SAM output, frontend build output, and coverage artifacts remain excluded.
 - CloudFormation stack `vialo-backend-dev` reached `UPDATE_COMPLETE`; branded frontend assets were published through CloudFront.
 - A fresh Playwright production run of the exact reported prompt returned a real itinerary, not `OFF_TOPIC` or an origin ambiguity. It resolved the intended Tbilisi Sports Palace at May Square, rolled the elapsed 09:00 window to the next local day, scheduled verified stops with ratings and attributed photos, and showed a real route comparison (6.7 km naive versus 5.3 km optimized). The page produced zero console errors.
+
+## 2026-08-20 — Itinerary resilience, UI refresh, and the Phase 4 evidence gates
+
+### Resilience and UI changes shipped in `acffec1`
+
+- Stops with no publishable opening hours are now retained instead of excluded. `HoursSource` gained
+  `unverified`; such a stop carries exactly one interval equal to the user's requested window, and the
+  timeline renders `Hours not available · schedule unconstrained` with its own annotation styling. No
+  00:00–24:00 availability is synthesized, nothing is described as open, and an explicit
+  `CLOSED_ON_DATE` closure is still an exclusion. The bounded repair pass applies the identical policy
+  through `_repair_hours_with_unverified_fallback`, so a repaired candidate can never be treated more
+  generously than an initially grounded one.
+- Live Tbilisi runs motivated the change: Google publishes no hours for stops such as Narikala
+  Fortress, and excluding them produced a thin itinerary for a place that is in fact walkable at any
+  hour. Retaining with visible provenance keeps the judgement with the user.
+- Grounding now receives the requested window so the unverified interval is derived rather than
+  guessed, and `ground_places` still rejects duplicates, foreign timezones, and ambiguous queries.
+- Frontend: accessible fullscreen for both maps (Fullscreen API with CSS fallback, Escape handling,
+  focus return, scroll lock, and a bounds refit after resize), category-aware markers that combine a
+  glyph and a shape so category is never communicated by color alone, and a reworked hero with an
+  editorial postcard, an explicit `Describe freely` / `Choose details` tablist, and clearer
+  autocomplete labelling for start and end points.
+- Tests grew with the behavior: a new `test_prompt_content.py` covering the selection prompt contract,
+  `hero-and-maps.test.tsx` for the hero and map surfaces, plus timeline and schema-contract additions.
+
+### Documentation drift corrected
+
+The unverified-hours behavior contradicted `.kiro/steering/tech.md`, requirement 4.5, and two lines in
+`design.md`, all of which still said missing hours exclude a stop. Steering and the spec were amended
+to describe the shipped behavior, with the amendment dated and its reason recorded in requirement 4.5
+rather than quietly rewritten. `README.md` test counts were also stale (396/93 against an actual
+455/116 at commit `acffec1`).
+
+### Spec task 13 closed with deployed evidence
+
+`tech.md` required benchmark evidence before making any solver-latency or memory claim, so task 13 had
+stayed open. `scripts/solver_benchmark.py` now runs the production `solve_exact` and `solve_route`
+functions over a fixed-seed directed matrix in three cases: `unconstrained` (wide window, every
+permutation evaluated to the final leg — the true upper bound), `realistic` (10-hour window,
+hour-long visits, staggered hours), and `dropping` (an infeasible nine-stop day, so the exhaustive
+search reruns after each progressive drop — the worst case a request can reach).
+
+The harness was deployed as a throwaway ARM64 Lambda built from the live dependency layer, measured at
+three memory sizes, then deleted along with its role and log group. Median of three samples after a
+warm-up:
+
+| Environment | 8! dropping | 9! unconstrained | 9! dropping |
+|---|---:|---:|---:|
+| Lambda ARM64 512 MB | 1.340 s | 11.655 s | 11.976 s |
+| Lambda ARM64 1024 MB | 0.641 s | 5.500 s | 5.764 s |
+| Lambda ARM64 1769 MB | 0.400 s | 3.388 s | 3.533 s |
+| Local x86_64 host | 0.212 s | 1.956 s | 1.957 s |
+
+Raw JSON is committed under `docs/kiro-evidence/solver-benchmark/`.
+
+CloudWatch shows the deployed function already reaching 19.6 s maximum request duration on small
+itineraries, where the solver is negligible and the time is Bedrock, grounding, the matrix, two
+geometry calls, and cold start. Twelve seconds of solving on top of that would have exceeded the 30 s
+budget, so a full nine-stop day was not actually deliverable at 512 MB. `MemorySize` moved to 1769 MB
+— one full vCPU — which keeps the search exhaustive and provably optimal instead of substituting a
+heuristic. Lambda GB-seconds stay roughly flat for the solver stage because duration falls by about
+the same factor the per-millisecond price rises. The template, the live function configuration, and
+the contract test that pins the value were updated together; the live function reports 1769 MB and
+passed the zero-spend smoke set afterwards.
+
+### Phase 4 hardening gates
+
+- **Secret scan.** gitleaks scanned all 13 commits: no leaks. A working-tree scan found 226 matches,
+  every one inside a gitignored path — vendored botocore example fixtures and the local
+  `.tmp/aws-session.sh` session file — and zero in tracked files. That double result is the useful
+  one: it proves the scanner detects real credentials and that none are in the repository.
+  Transcript: `docs/kiro-evidence/secret-scan.txt`.
+- **Fresh-clone gate.** A clean clone of the public remote passed every README command verbatim:
+  `uv sync`, 455 tests, Ruff, strict mypy, ARM64 layer verification (31,638,225 uncompressed bytes,
+  one native extension), source and transformed SAM validation, SAM build, `npm ci`, contract
+  generation with no drift, ESLint, `tsc`, 116 Vitest tests, a production Vite build, and
+  `npm audit` with zero vulnerabilities. Transcript: `docs/kiro-evidence/fresh-clone.txt`.
+- **Scope guard.** A 33-case battery covers instruction-override injection, credential extraction,
+  code execution, plain off-topic use, prompts missing a place or time signal, legitimate free-text and
+  structured requests, and camouflaged injection. All matched expectation, and the same five
+  representative refusals were confirmed against the live API with zero provider spend. One case
+  corrected an assumption of mine: `<script>alert(1)</script>` is refused because `script` matches the
+  abuse pattern, not because of anything about markup.
+- **Model-authored string bounds.** The battery documented that the guard is a spend filter, not an
+  injection filter: a prompt that keeps place and time signals reaches Bedrock even when it also
+  carries an injection. Grounded stop names always come from Places, but the locality label and a
+  dropped candidate's name are model-authored, are rendered, and can persist inside a share, and they
+  had no length bound. `locality_query`, `origin_query`, `CandidateStop.name`, and
+  `DurationEvidence.quote` are now bounded (120/200/120/500) with regression tests.
+
+### Kiro workflow artifacts
+
+- Added `KIRO.md`: the workflow narrative, the commit ordering that shows steering and specs preceding
+  code, and a table of fifteen corrections with what caused each one.
+- Added `docs/kiro-evidence/` with an index that states plainly what is machine-generated and that no
+  screen recordings of steering or wave execution were captured, rather than staging re-enactments.
+- Closed the outstanding Phase 3 hook item: `.kiro/hooks/validate-backend.sh` runs Ruff, Ruff format,
+  strict mypy, and pytest, wired as the `stop` hook of a new `backend-engineer` agent whose write
+  access is limited to `backend/`, `infra/`, `scripts/`, `docs/`, and `.kiro/specs/`. Both agent
+  configs pass `kiro-cli agent validate`, and all three hooks were executed and captured in
+  `docs/kiro-evidence/hook-runs.txt`.
+
+### Live production verification after the memory change
+
+A Playwright run against `https://vialo.place` computed a real Naples day from the committed example
+prompt: 7 of 8 stops scheduled inside 10:00–18:00, naive 4.7 km / 1 hr 08 min against the solved
+4.0 km / 58 min, seven grounded stops with ratings and attributed photos, real walking legs, and
+Quartieri Spagnoli dropped with a stated reason. Piazza del Plebiscito displayed
+`Hours not available · schedule unconstrained`, confirming the unverified-hours disclosure reaches
+production rather than silently assuming availability. At 390 px the document had zero horizontal
+overflow. A deliberate free-text origin of "Napoli Centrale" produced the typed
+`Could not resolve the requested starting point unambiguously` message instead of a guess, and the
+only console output was that expected 400 plus Google's own `google.maps.Marker` deprecation notice.
+Details and screenshots: `docs/kiro-evidence/live-production-run.txt`.
+
+### Comparison map: the baseline was invisible where it mattered
+
+The live Naples screenshots exposed a defect in the project's highest-leverage surface. Both routes
+were drawn, but the coral dashed baseline went underneath a 5-pixel solid plum line, and because the
+two orders share most of the same streets the baseline was effectively hidden — the comparison read
+as a single route. The dash pattern was also wrong: a 0.62-opacity base stroke with dash symbols on
+top renders as a translucent solid line with darker segments rather than a dash.
+
+Polyline options moved to `frontend/src/lib/map-lines.ts` as pure builders so the visual contract is
+unit-testable without a Maps runtime. The baseline now uses a transparent base stroke with repeated
+dash symbols, keeps its 3-pixel weight and coral colour, and sits at a higher `zIndex` than the
+optimized line; the optimized route keeps its heavier solid plum stroke and full opacity, so it still
+reads as the answer while overlapping segments stay verifiable. Four tests assert the z-order, the
+dash construction, the weight difference, the design-system colours, and that both lines use the same
+supplied path so bounds and scale cannot diverge. Frontend suite: 120 tests.
+
+This change is in the repository but not yet published to CloudFront; deploying the frontend requires the
+referrer-restricted browser key at build time.
+
+### Gate after the day's changes
+
+463 backend tests (the 455 at `acffec1` plus 8 for the new string bounds), 120 frontend tests, Ruff
+lint and format, strict mypy across 81 source files, ESLint, strict TypeScript, contract-drift check,
+production Vite build, `npm audit` clean, SAM validate, ARM64 layer verification, and repository
+validation all pass.
+
+## 2026-08-20 (later): Vialo Journal, candidate resilience, and place-ID routing
+
+Three things were asked for in one sitting: stop shipping thin days with a red "couldn't fit" box,
+stop routing walkers down car roads, and build a second surface where travellers publish the days
+they actually walked. All three shipped. The Journal is the largest single addition since the
+frontend.
+
+### Thin days: nothing ever asked for new ideas
+
+The cause was structural rather than a bug. The chain was: the selector sized a candidate list to the
+window, grounding could kill a stop four ways, one repair pass existed but only for `PLACE_NOT_FOUND`
+and `CLOSED_ON_DATE` and only when Google happened to return a usable alternative, then the solver
+dropped more for feasibility. If five candidates were proposed for a four-hour day and four died, the
+result was one stop, four hours, and a red box. No step in the pipeline ever said "give me different
+ones".
+
+Three changes, in `domain/candidate_targets.py` and the selector:
+
+- **A target density.** `ceil(window_minutes / 90)` capped at 9. The 90-minute unit is one bounded
+  visit plus the walk to it. It is a target, never a guarantee: real hours and real travel times still
+  decide what fits, and the solver stays exact.
+- **Reserves in the same call.** The selector now asks for the fitting count plus two spares at
+  priority 3. This costs nothing extra and absorbs most exclusions before they matter.
+- **One bounded top-up.** When retained stops fall below target, exactly one extra Bedrock call asks
+  for replacements, excluding every place ID and name already used. Hard-capped at one per request.
+  Replacements are grounded through the same Places path, so nothing is invented.
+
+The red box is gone. Stops that genuinely cannot fit now appear as neutral suggestions rather than an
+error, which is the honest framing: a stop that closes before your day ends is not a failure of the
+itinerary, it is information about the stop. Stops still never vanish silently.
+
+### Walking routes on car roads
+
+Partly ours. The pipeline already held a verified `place_id` for every stop, origin, and destination
+and was throwing it away at routing time, sending raw `latLng` instead. Google snaps a bare
+coordinate to the nearest routable edge, which in cities with sparse pedestrian data is frequently
+the car road or the wrong side of a block. Both `computeRouteMatrix` and `computeRoutes` now send
+`placeId` waypoints, so routing uses each establishment's own entrance. This corrects the measured
+matrix durations, not only the drawn line. `RoutePoint` keeps coordinates as the fallback when no ID
+is available.
+
+Partly not ours, and worth saying plainly: Tbilisi's pedestrian graph in Google's data is genuinely
+incomplete. Where no sidewalk exists in the data, Google routes along the road. No engine change
+fixes that, and the walking-beta notice already covers it.
+
+### Vialo Journal
+
+A second surface at `/journal`. Reading is anonymous. Publishing, commenting, and reporting need an
+account.
+
+- **Identity.** AWS Cognito, Authorization Code with PKCE, no client secret. A `PreSignUp` Lambda
+  auto-confirms accounts, because an emailed verification code is a hard dependency on mail
+  deliverability from a domain with no sending reputation, at the exact moment a judge is deciding
+  whether the feature works. The backend verifies every write against the pool's published JWKS with
+  one cached client per execution environment. The email address never leaves the user pool: the
+  Journal table stores an opaque subject and a display name derived from claims.
+- **Storage.** Its own DynamoDB table with three GSIs, deliberately separate from the place cache,
+  the rate-limit table, and anonymous shares, because all four have different lifecycles and
+  retention answers. Listing indexes project listing attributes only, so a feed page never pulls a
+  story body or an attached itinerary across the wire. The single `FEED` partition is the classic
+  hot-partition anti-pattern and is correct at these abuse limits: five stories per author per day.
+- **Text.** Stored as plain text with control characters stripped and whitespace collapsed. It is
+  deliberately not HTML-escaped at the storage boundary, because escaping there corrupts the stored
+  value and double-escapes on a second pass. The defence is that React interpolates text nodes and
+  the Journal contains no `dangerouslySetInnerHTML` at all.
+- **Cover images.** Presigned POST rather than PUT, because only POST can carry `content-length-range`
+  and an exact `Content-Type` as signed policy conditions, which puts S3 rather than the browser in
+  charge of the 2 MB cap. Keys are server-generated under the author's opaque subject, so path
+  selection and cross-author overwrites are impossible by construction.
+- **Integration.** "Publish this day as a story" snapshots the full computed response into the post
+  rather than referencing a share ID, because shares expire after 30 days and a story should outlive
+  that. It renders read-only through the same component that renders a share, so there is one
+  itinerary renderer in the product. On the result page, `CityStories` surfaces up to three stories
+  for the computed locality and returns nothing on empty *or on error*, so a Journal outage can never
+  degrade a working itinerary.
+
+### A hidden story still served its comment thread
+
+Found by probing the deployed API rather than by a test. Three reports hid a story: `GET
+/api/blog/posts/{id}` correctly returned 404, but `GET /api/blog/posts/{id}/comments` still returned
+200 with the entire discussion, because `list_comments` never resolved the story. Moderation hid the
+post and left the conversation under it public.
+
+The comments route now resolves the story first, which already excludes hidden posts, and returns
+`404 POST_NOT_FOUND` otherwise. Two regression tests: one publishes, comments, confirms the thread is
+visible, reports three times, and asserts the thread is gone; the other covers a story that never
+existed. This is also consistent with `POST .../comments`, which already performed the existence
+check.
+
+### The spec that came after the code
+
+The Journal is the one feature in this repository whose specification was written after its
+implementation. It was built from a fifteen-question design questionnaire straight into code, under
+deadline pressure, and the mechanism that allowed it is visible in the steering: `product.md` froze
+scope at four features and said "no accounts, no sign-up", so a fifth feature had nowhere legitimate
+to go.
+
+Rather than backdate anything:
+
+- `.kiro/specs/journal/` was written by reading the shipped code, and all three files carry a
+  provenance note saying so. The task checkboxes record what exists, not what was planned.
+- `product.md` moved to five features, and the "no accounts, no payment" principle was amended rather
+  than rewritten. Both changes carry their date and their reason inline.
+- `KIRO.md` gained a section titled "The one place this workflow broke its own rule", plus two new
+  correction-table rows.
+
+A specification whose only purpose is to make a process claim look clean is worth less than no
+specification at all.
+
+### Privacy and Terms were factually wrong
+
+The Privacy page said Vialo "does not create accounts or collect personal information" while a
+Cognito user pool was live in production. It now states that accounts exist, that Cognito holds the
+email address and Vialo never sees the password, that the Journal table holds only an opaque
+identifier and a display name, that stories persist until deleted rather than expiring at 30 days
+like shares, and that EXIF metadata is not stripped from uploaded cover images. Terms gained a
+user-content clause covering ownership, the daily allowances, the no-editing rule, and report-based
+hiding with no appeal process.
+
+### Known gaps, recorded rather than discovered later
+
+- The Cognito hosted sign-in page uses Cognito's default styling. It is the one surface in the
+  product that does not look like the product.
+- EXIF metadata is not stripped from cover images. Server-side re-encoding was scoped and dropped: it
+  would have added Pillow to the layer for roughly 3 MB.
+- Moderation is mechanical, with no appeal and no human review.
+- Auto-confirmed signup means email addresses are unverified. Abuse is bounded by the daily
+  allowances rather than by identity.
+- Stories cannot be edited after publication.
+
+### Deployed and verified
+
+The comments fix and the corrected legal pages both went to production. The CloudFormation changeset
+touched exactly two resources, `VialoFunction` and `VialoApi`, and reached `UPDATE_COMPLETE`; the
+frontend rebuilt to `index-B3Kk0cQW.js` and was synced with a CloudFront invalidation.
+
+Verified against the live stack afterwards: `GET /api/blog/posts/{missing}/comments` now returns
+`404 POST_NOT_FOUND`, every write path refuses unauthenticated callers with a typed `401`, an
+`alg=none` JWT carrying the real audience and a far-future expiry is refused, the media bucket is
+`403` both directly and through the CDN, all five SPA routes resolve, the off-topic scope guard still
+returns `OFF_TOPIC` with zero spend, and the false "does not create accounts" sentence is gone from
+the shipped bundle while the three replacement statements are present.
+
+The battery is committed as `docs/kiro-evidence/journal-verification.txt` with
+`docs/kiro-evidence/regenerate-journal-verification.sh` to reproduce it. It paces itself below the
+deployed 2 req/s throttle: the first run did not, and reported two spurious `429`s that were the
+battery throttling itself rather than anything about the endpoints. That is worth recording because
+the wrong version of that file would have read as a real defect.
+
+The authenticated write path (publish, comment, cover upload) is covered by the 21 API tests running
+the real routes against moto, and by hand in the browser. It is deliberately absent from the scripted
+battery, because scripting it would put a password in a committed file.
+
+### Gate
+
+551 backend tests, 171 frontend tests, Ruff lint and format, strict mypy across 92 source files,
+ESLint, strict TypeScript, contract-drift check, SAM validation, and repository credential validation
+all pass.
