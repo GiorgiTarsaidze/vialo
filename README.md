@@ -250,12 +250,13 @@ npm test
 VITE_GOOGLE_MAPS_BROWSER_KEY=replace-with-referrer-restricted-key npm run build
 ```
 
-The release gate passes 549 backend tests and 171 frontend tests, strict mypy and TypeScript, Ruff and
+The release gate passes 551 backend tests and 171 frontend tests, strict mypy and TypeScript, Ruff and
 ESLint, source and transformed SAM validation, an ARM64 layer check, a production Vite build, and
 `npm audit` with zero known vulnerabilities. Ordinary tests mock provider and AWS boundaries and make
-no live provider calls. These same commands were re-run on 2026-08-20 against a fresh clone of this
-repository on a clean checkout; the transcript is in
-[`docs/kiro-evidence/fresh-clone.txt`](docs/kiro-evidence/fresh-clone.txt).
+no live provider calls. The fresh-clone transcript in
+[`docs/kiro-evidence/fresh-clone.txt`](docs/kiro-evidence/fresh-clone.txt) records the same commands
+passing on a clean checkout, at the earlier commit `acffec1` where the counts were 455 and 116; the
+Journal added the rest.
 
 Two optional verification harnesses are committed:
 
