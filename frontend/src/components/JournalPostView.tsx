@@ -97,17 +97,27 @@ export default function JournalPostView() {
   return (
     <article className="journal-post-view" aria-labelledby="post-title">
       <header className="journal-post-header">
-        <Link to="/journal" className="journal-post-back">← Journal</Link>
+        <Link to="/journal" className="journal-post-back">
+          <span aria-hidden="true">←</span> Journal
+        </Link>
+        <p className="journal-post-city">{post.city}</p>
         <h1 id="post-title" className="journal-post-title">{post.title}</h1>
-        <p className="journal-post-meta">
-          <span>{post.city}</span>
-          <span aria-hidden="true">·</span>
-          <span>{post.author.displayName}</span>
-          <span aria-hidden="true">·</span>
+        <div className="journal-post-meta">
+          <span className="journal-post-avatar" aria-hidden="true">
+            {post.author.displayName.charAt(0).toUpperCase()}
+          </span>
+          <span className="journal-post-author">{post.author.displayName}</span>
+          <span className="journal-post-sep" aria-hidden="true">·</span>
           <time dateTime={post.createdAt}>
             {new Date(post.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
           </time>
-        </p>
+          {post.itinerary && (
+            <>
+              <span className="journal-post-sep" aria-hidden="true">·</span>
+              <span className="journal-post-stops">{post.itinerary.stops.length} stops walked</span>
+            </>
+          )}
+        </div>
       </header>
 
       {post.coverImageUrl && (
@@ -124,7 +134,11 @@ export default function JournalPostView() {
 
       {post.itinerary && (
         <section className="journal-post-itinerary" aria-label="Attached itinerary">
-          <h2 className="journal-post-itinerary__heading">Attached route</h2>
+          <h2 className="journal-post-itinerary__heading">The day they walked</h2>
+          <p className="journal-post-itinerary__note">
+            Computed by Vialo and saved with this story, so it stays readable after the
+            30-day share window closes.
+          </p>
           <ResultView result={post.itinerary} readOnly />
         </section>
       )}
@@ -185,12 +199,13 @@ const styles = `
 
 .journal-post-back {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--color-ink-muted);
   text-decoration: none;
   min-height: 44px;
   display: inline-flex;
   align-items: center;
+  gap: var(--space-1);
 }
 
 .journal-post-back:hover {
@@ -198,67 +213,141 @@ const styles = `
 }
 
 .journal-post-header {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-6);
+}
+
+.journal-post-city {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin: var(--space-4) 0 var(--space-2);
 }
 
 .journal-post-title {
   font-family: var(--font-display);
-  font-size: 28px;
-  line-height: 34px;
+  font-size: 32px;
+  line-height: 38px;
   font-weight: 500;
+  letter-spacing: -0.015em;
   color: var(--color-ink);
-  margin: var(--space-3) 0 var(--space-2);
+  margin: 0 0 var(--space-4);
+  text-wrap: balance;
 }
 
 @media (min-width: 640px) {
   .journal-post-title {
-    font-size: 38px;
-    line-height: 42px;
+    font-size: 46px;
+    line-height: 52px;
   }
 }
 
 .journal-post-meta {
-  font-size: 14px;
-  color: var(--color-ink-muted);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 14px;
+  color: var(--color-ink-muted);
+}
+
+.journal-post-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.journal-post-author {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.journal-post-sep {
+  color: var(--color-border-strong);
+}
+
+.journal-post-stops {
+  font-weight: 500;
+  color: var(--color-primary);
 }
 
 .journal-post-cover {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-6);
   border-radius: var(--radius-card);
   overflow: hidden;
-  max-height: 360px;
+  border: 1px solid var(--color-border);
 }
 
 .journal-post-cover__img {
   width: 100%;
-  height: 100%;
-  max-height: 360px;
+  aspect-ratio: 16 / 9;
   object-fit: cover;
 }
 
+/* Reading measure: wider leading and a larger size than UI body copy, because
+   this is the one surface in the product meant to be read rather than scanned. */
 .journal-post-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  font-size: 15px;
-  line-height: 23px;
+  font-size: 18px;
+  line-height: 30px;
   color: var(--color-ink);
 }
 
+.journal-post-body p {
+  margin: 0;
+}
+
+.journal-post-body p:first-child::first-letter {
+  font-family: var(--font-display);
+  font-size: 56px;
+  line-height: 44px;
+  font-weight: 500;
+  float: left;
+  padding: 4px var(--space-3) 0 0;
+  color: var(--color-primary);
+}
+
+/* The attached day carries maps and a timeline, so it breaks out of the
+   reading measure on wide screens instead of being squeezed into it. */
 .journal-post-itinerary {
-  margin-top: var(--space-6);
-  padding-top: var(--space-5);
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
   border-top: 1px solid var(--color-border);
 }
 
+@media (min-width: 1080px) {
+  .journal-post-itinerary {
+    width: calc(100vw - var(--space-6) * 2);
+    max-width: 1140px;
+    margin-left: 50%;
+    transform: translateX(-50%);
+  }
+}
+
 .journal-post-itinerary__heading {
-  font-size: 18px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 500;
   color: var(--color-ink);
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-2);
+}
+
+.journal-post-itinerary__note {
+  font-size: 14px;
+  color: var(--color-ink-muted);
+  margin: 0 0 var(--space-5);
 }
 
 .journal-post-actions {
@@ -272,10 +361,13 @@ const styles = `
 
 .journal-post-action {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-input);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  transition: background var(--duration-fast) ease;
 }
 
 .journal-post-action--delete {

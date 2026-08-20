@@ -265,6 +265,24 @@ Motion explains state and hierarchy; it never decorates waiting.
 - **No perpetual motion:** no pulsing map pins, looping route draws, bouncing buttons, or autoplay carousels
 - Honor `prefers-reduced-motion` and preserve all information without animation
 
+### Amendment, 2026-08-20: the Journal story band
+
+The home page carries one continuously drifting band of recent Journal stories. It is a deliberate, single exception to "no perpetual motion", and it is narrow on purpose:
+
+- It is a **marquee, not a carousel**. Nothing is hidden and swapped in on a timer, so no content ever changes under the reader. The "no autoplay carousels" rule stands unchanged, and the reason behind it, that content must not move out from under someone mid-read, is still honored.
+- It pauses on hover and on keyboard focus.
+- Under `prefers-reduced-motion: reduce` the track does not move at all and becomes an ordinary horizontally scrollable row.
+- The duplicated half of the track is `aria-hidden` with its links removed from the tab order, so each story is reachable exactly once.
+- It renders nothing when the Journal is empty or unreachable.
+
+**Why the exception exists.** The band is the only thing on the home page that shows the planner and the Journal are one product rather than two tabs sharing a domain, and a static row of three cards did not read as an invitation to look. This is recorded here rather than applied silently, because a motion rule that can be waived without a note is not a rule.
+
+**Where else motion may loop:** nowhere. The route comparison, the timeline, and every map surface keep the play-once rule exactly as written above.
+
+### The one surface Vialo does not render
+
+The Cognito hosted sign-in page is served by AWS, not by this application, and accepts only a fixed allowlist of CSS classes and properties. It is branded to the palette in [`infra/cognito-hosted-ui.css`](../../infra/cognito-hosted-ui.css) with literal hex values rather than the tokens above, because custom properties are not among the accepted values. When a colour token changes here, that file has to be changed with it and re-applied with `scripts/apply-cognito-branding.sh`; nothing enforces the link automatically.
+
 ## Components and interaction states
 
 Every interactive component must define: default, hover, active, focus-visible, disabled, loading, and error states.

@@ -10,6 +10,7 @@ import JournalPostView from './components/JournalPostView';
 import JournalEditor from './components/JournalEditor';
 import JournalMine from './components/JournalMine';
 import AuthCallback from './components/AuthCallback';
+import StoryStrip from './components/StoryStrip';
 import { usePlanning } from './hooks/use-planning';
 
 export default function App() {
@@ -22,7 +23,10 @@ export default function App() {
           path="/"
           element={
             planning.state === 'idle' ? (
-              <InputHero onSubmit={planning.submit} />
+              <>
+                <InputHero onSubmit={planning.submit} />
+                <StoryStrip />
+              </>
             ) : planning.state === 'loading' ? (
               <InputHero onSubmit={planning.submit} loading />
             ) : planning.state === 'error' ? (

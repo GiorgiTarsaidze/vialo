@@ -157,7 +157,7 @@ describe('JournalLanding', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Load more')).toBeInTheDocument();
+      expect(screen.getByText('Load more stories')).toBeInTheDocument();
     });
   });
 });
@@ -170,7 +170,7 @@ describe('JournalCard', () => {
         <JournalCard post={makePost()} />
       </MemoryRouter>,
     );
-    expect(screen.getByText('Route attached · 5 stops')).toBeInTheDocument();
+    expect(screen.getByText('5 stops')).toBeInTheDocument();
   });
 
   it('renders typographic fallback when no cover image', async () => {

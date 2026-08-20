@@ -149,8 +149,11 @@ than smoothed over.
 
 Stated here rather than discovered during judging:
 
-- The Cognito hosted sign-in page uses Cognito's default styling. It is the one surface in the
-  product that does not look like the product.
+- The Cognito hosted sign-in page is branded to the Vialo palette through
+  [`infra/cognito-hosted-ui.css`](infra/cognito-hosted-ui.css), applied with
+  `scripts/apply-cognito-branding.sh`. Cognito accepts only a fixed allowlist of classes and
+  properties there, so it is close to the product rather than identical to it, and its stylesheet
+  has to be updated by hand whenever a colour token changes.
 - EXIF metadata, including GPS, is not stripped from uploaded cover images.
 - Moderation is mechanical. Three reports hide a story, with no appeal and no human review.
 - Sign-up is auto-confirmed, so email addresses are unverified. Abuse is bounded by the daily
@@ -250,7 +253,7 @@ npm test
 VITE_GOOGLE_MAPS_BROWSER_KEY=replace-with-referrer-restricted-key npm run build
 ```
 
-The release gate passes 551 backend tests and 171 frontend tests, strict mypy and TypeScript, Ruff and
+The release gate passes 551 backend tests and 186 frontend tests, strict mypy and TypeScript, Ruff and
 ESLint, source and transformed SAM validation, an ARM64 layer check, a production Vite build, and
 `npm audit` with zero known vulnerabilities. Ordinary tests mock provider and AWS boundaries and make
 no live provider calls. The fresh-clone transcript in

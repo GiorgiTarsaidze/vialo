@@ -562,3 +562,84 @@ battery, because scripting it would put a password in a committed file.
 551 backend tests, 171 frontend tests, Ruff lint and format, strict mypy across 92 source files,
 ESLint, strict TypeScript, contract-drift check, SAM validation, and repository credential validation
 all pass.
+
+## 2026-08-20 (evening): Journal visual pass and hosted-UI branding
+
+Review feedback on the shipped Journal was that it had been styled for mobile and left to fend for
+itself on desktop, that the writing surface did not look like part of the product, and that the one
+page Vialo does not render, the Cognito hosted sign-in, looked like exactly what it was.
+
+### The header now says who you are
+
+`useAuth` gained a `displayName` derived from the ID token, deliberately mirroring
+`display_name_from_claims` in the backend, including the claim order and the `Traveller` fallback, so
+the header can never disagree with the name attached to a published story. Only the local part of an
+email is ever used, and a test asserts the full address never reaches the DOM.
+
+The header itself was rebuilt. The wordmark had `margin-left: auto`, which is why it drifted with the
+back button and read as misaligned; it now anchors left with navigation and the account control on
+the right. Current page is marked by weight and a rule rather than colour alone. Signed out there is
+one sign-in action; signed in there is a named chip with a menu carrying "Signed in as", My stories,
+Write a story, and Sign out. Below 560 px the wordmark text and the account name give up their space
+before the control itself does.
+
+### Cards, landing, and the writing surface
+
+Cards became editorial: a 3:2 cover with the city as a floating pill, a display-face title, the
+excerpt, an avatar byline, and a route pill carrying the stop count. The lead story on the Journal
+landing lays out as a wide two-column plate above the grid, but only when at least three stories
+exist, because a featured plate with nothing beneath it is just a large card.
+
+The editor is now a two-column writing surface: the title behaves like the headline it becomes rather
+than a form field, the body has a progress indicator toward the 50-character minimum, and a sticky
+sidebar holds a drag-and-drop cover target, the attached day, the allowance, and the publish action.
+It states plainly that stories cannot be edited after publishing and that image metadata is not
+stripped.
+
+### Two defects found while doing it
+
+- **The city filter collapsed itself.** Cities were derived from the currently visible posts, so
+  filtering to one city rewrote the filter row to contain only that city. The only way back was
+  "All cities". Cities now come from the unfiltered feed and are captured once. Regression test
+  included.
+- **A sparse feed looked broken.** One or two stories in a three-column grid left a dead column that
+  reads as a loading failure. They now centre at a readable width. The first attempt at this silently
+  did nothing: `.journal-grid--sparse` and `.journal-grid` have identical specificity, and the
+  responsive three-column rule comes later in the sheet, so it won. Fixed with a compound selector
+  and a comment saying why.
+
+### The story band, and a motion rule amended rather than ignored
+
+The home page carries a drifting band of recent stories under the hero. `design-system.md` said "no
+perpetual motion", so the exception is written into the steering with its date and its reason instead
+of being applied quietly. It is a marquee rather than a carousel, so nothing is ever swapped out from
+under a reader; it pauses on hover and focus; under `prefers-reduced-motion` it does not move at all;
+and the duplicated half of the track is `aria-hidden` with its links out of the tab order.
+
+The first version padded a lane by repeating the only existing story six times, which looked like a
+busy feed and was not one. The band now drifts only once four distinct stories exist and renders a
+plain static row below that. "Nothing simulated" is a product rule, not only a data rule.
+
+### The hosted sign-in page
+
+Branded to the palette with `set-ui-customization`: cream canvas, plum submit button, Vialo mark above
+the form. Cognito validates against a fixed allowlist and rejects the entire request on one unknown
+class, which `.inputLabel-customizable` turned out to be.
+
+This is applied by `scripts/apply-cognito-branding.sh` rather than CloudFormation on purpose.
+`AWS::Cognito::UserPoolUICustomizationAttachment` can carry the CSS but has no way to attach the
+logo, because `SetUICustomization` takes the image as raw bytes. Splitting them would mean a stack
+update could rewrite the CSS without the image and blank the logo, so one call sets both together.
+The stylesheet lives at `infra/cognito-hosted-ui.css` with literal hex values, because custom
+properties are not among the accepted values; `design-system.md` now records that this file has to be
+changed alongside the tokens and that nothing enforces the link automatically.
+
+### Gate
+
+551 backend tests, 186 frontend tests (171 plus 15 covering the account control, the story band, and
+the city filter), Ruff, strict mypy, ESLint, strict TypeScript, and repository validation all pass.
+Deployed and verified on desktop at 1568 px.
+
+**Not verified this pass:** the mobile viewport. The browser window would not resize below the
+desktop width in this environment, so the responsive CSS for these surfaces is written but has not
+been seen rendering at 360 or 390 px. That is an open check, not a completed one.

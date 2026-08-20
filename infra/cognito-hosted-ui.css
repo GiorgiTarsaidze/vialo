@@ -1,0 +1,111 @@
+/*
+ * Vialo branding for the Cognito classic hosted sign-in page.
+ *
+ * The hosted UI is the one surface Vialo does not render itself, so it is also
+ * the one place the design system has to be reproduced by hand. Cognito accepts
+ * only a fixed allowlist of classes and properties here, which is why these are
+ * literal hex values rather than the design tokens in frontend/styles/tokens.css.
+ * Keep the two in step: cream canvas, plum primary, 14px input radius.
+ *
+ * Applied by infra/template.yaml. The logo is uploaded separately because
+ * CloudFormation cannot attach an image to a UI customization.
+ */
+
+.background-customizable {
+  background-color: #fff8ea;
+}
+
+.banner-customizable {
+  padding: 28px 0 20px 0;
+  background-color: #fff8ea;
+}
+
+.logo-customizable {
+  max-width: 68px;
+  max-height: 68px;
+}
+
+.label-customizable {
+  font-weight: 600;
+  color: #6d6064;
+}
+
+.inputField-customizable {
+  width: 100%;
+  height: 46px;
+  color: #2b2326;
+  background-color: #ffffff;
+  border: 1px solid #e7d8d1;
+  border-radius: 14px;
+  font-size: 15px;
+}
+
+.inputField-customizable:focus {
+  border-color: #6f3e59;
+  outline: 0;
+}
+
+.submitButton-customizable {
+  background-color: #6f3e59;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 24px;
+  height: 48px;
+  width: 100%;
+  margin: 20px 0 12px 0;
+}
+
+.submitButton-customizable:hover {
+  background-color: #593047;
+  color: #ffffff;
+}
+
+.textDescription-customizable {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  display: block;
+  font-size: 14px;
+  color: #6d6064;
+}
+
+.idpDescription-customizable {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  display: block;
+  font-size: 14px;
+  color: #6d6064;
+}
+
+.legalText-customizable {
+  color: #6d6064;
+  font-size: 12px;
+}
+
+.errorMessage-customizable {
+  padding: 12px;
+  font-size: 14px;
+  width: 100%;
+  background: #f8dde4;
+  border: 1px solid #9a3f50;
+  color: #9a3f50;
+}
+
+.redirect-customizable {
+  padding: 12px 0;
+}
+
+.passwordCheck-notValid-customizable {
+  color: #9a3f50;
+}
+
+.passwordCheck-valid-customizable {
+  color: #456a50;
+}
+
+.socialButton-customizable {
+  border-radius: 14px;
+  height: 44px;
+  margin-bottom: 12px;
+  width: 100%;
+}
