@@ -472,7 +472,9 @@ describe('DroppedStops', () => {
     expect(screen.getByText('Arsenale')).toBeInTheDocument();
     expect(screen.getByText('Museum')).toBeInTheDocument();
     expect(screen.getByText('Closed on the day you asked for.')).toBeInTheDocument();
-    expect(screen.getByText('Adding it would push the day past your end time.')).toBeInTheDocument();
+    expect(
+      screen.getByText('It could not be fitted around the other stops and their opening times.'),
+    ).toBeInTheDocument();
   });
 
   it('renders nothing for empty drops', () => {

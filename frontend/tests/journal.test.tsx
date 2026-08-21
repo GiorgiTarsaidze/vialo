@@ -461,7 +461,9 @@ describe('DroppedStops suggestions copy', () => {
     // Expand to show all
     await user.click(screen.getByText('Show all 7'));
 
-    expect(screen.getByText('Adding it would push the day past your end time.')).toBeInTheDocument();
+    expect(
+      screen.getByText('It could not be fitted around the other stops and their opening times.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Closed on the day you asked for.')).toBeInTheDocument();
     expect(screen.getByText('No published opening hours to schedule against.')).toBeInTheDocument();
     expect(screen.getByText('Google Places had no unambiguous match for it.')).toBeInTheDocument();

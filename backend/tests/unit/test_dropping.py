@@ -115,3 +115,133 @@ class TestSolveWithDropping:
         assert len(dropped) > 0
         # Priority 3 should be dropped first
         assert any(d.candidate_index == 1 for d in dropped)
+
+
+class TestFeasibilityBackfill:
+    """Greedy dropping must not leave a day emptier than it needs to be.
+
+    Progressive dropping removes the least essential stop until the whole set
+    solves, and never reconsiders. One badly constrained stop can therefore force
+    several drops, and the stops removed before it are never asked again.
+
+    A real six-hour Venice day retained 2 stops of 8 and finished at 11:48, more
+    than three hours before its window closed, reporting the rest as not fitting.
+    """
+
+    @staticmethod
+    def _uniform_matrix(n: int, seconds: int = 300) -> list[list[MatrixEdge]]:
+        return [
+            [
+                MatrixEdge(i, j, seconds * 2, seconds, True)
+                if i != j
+                else MatrixEdge(i, j, 0, 0, True)
+                for j in range(n)
+            ]
+            for i in range(n)
+        ]
+
+    def _narrow_stop(self, index: int, priority: int, duration_min: int) -> GroundedStop:
+        """A stop open for one hour only, which is what forces the drops."""
+        stop = _make_stop(index, priority, duration_min, open_seconds=3600)
+        return stop
+
+    def test_a_stop_dropped_before_the_blocking_one_is_reconsidered(self) -> None:
+        """The stop removed first is never retested against the final set.
+
+        Greedy dropping removes the least essential stop, finds the set still
+        infeasible because of a different stop entirely, and moves on. By the time
+        the blocking stop is finally removed, the innocent one is long gone and
+        nothing asks again whether it would have fitted. It usually would.
+        """
+        tz = dt.timezone(dt.timedelta(hours=2))
+        window_start = dt.datetime(2026, 8, 15, 9, 0, tzinfo=tz)
+        window_end = dt.datetime(2026, 8, 15, 13, 0, tzinfo=tz)
+
+        stops = [
+            # Least essential, easy to fit, and therefore dropped first.
+            _make_stop(0, 3, 30),
+            # The real blocker: open for two hours but needing all of them, so it
+            # can never fit once travel from the origin is counted.
+            _make_stop(1, 2, 120, open_seconds=7200),
+            _make_stop(2, 1, 30),
+            _make_stop(3, 1, 30),
+        ]
+
+        result = solve_with_dropping(
+            stops=stops,
+            origin_index=0,
+            matrix=self._uniform_matrix(len(stops) + 1),
+            window_start=window_start,
+            window_end=window_end,
+            return_to_origin=False,
+            travel_mode="WALK",
+        )
+
+        assert result is not None
+        schedule, dropped = result
+
+        kept = set(schedule.order)
+        dropped_indices = {d.candidate_index for d in dropped}
+
+        # Stop 1 genuinely cannot fit and must stay out.
+        assert 1 in dropped_indices
+        # Stop 0 was collateral damage and must come back.
+        assert 0 in kept, (
+            f"stop 0 was dropped before the blocker and never reconsidered: {dropped_indices}"
+        )
+        assert kept == {0, 2, 3}
+        assert dropped_indices == {1}
+        assert not kept & dropped_indices
+
+    def test_a_stop_that_genuinely_cannot_fit_stays_dropped(self) -> None:
+        """The backfill must not resurrect something that does not fit."""
+        tz = dt.timezone(dt.timedelta(hours=2))
+        window_start = dt.datetime(2026, 8, 15, 9, 0, tzinfo=tz)
+        window_end = dt.datetime(2026, 8, 15, 11, 0, tzinfo=tz)
+
+        stops = [
+            _make_stop(0, 1, 60),
+            _make_stop(1, 2, 60),
+            _make_stop(2, 3, 60),
+        ]
+
+        result = solve_with_dropping(
+            stops=stops,
+            origin_index=0,
+            matrix=self._uniform_matrix(len(stops) + 1),
+            window_start=window_start,
+            window_end=window_end,
+            return_to_origin=False,
+            travel_mode="WALK",
+        )
+
+        assert result is not None
+        schedule, dropped = result
+        # Two hours cannot hold three hour-long visits plus travel.
+        assert len(dropped) > 0
+        assert len(schedule.order) + len(dropped) == len(stops)
+        # Every retained stop must be absent from the dropped list and vice versa.
+        kept = set(schedule.order)
+        assert not kept & {d.candidate_index for d in dropped}
+
+    def test_kept_and_dropped_never_overlap_after_backfill(self) -> None:
+        tz = dt.timezone(dt.timedelta(hours=2))
+        window_start = dt.datetime(2026, 8, 15, 9, 0, tzinfo=tz)
+        window_end = dt.datetime(2026, 8, 15, 16, 0, tzinfo=tz)
+
+        stops = [self._narrow_stop(0, 1, 55)] + [_make_stop(i, 2, 25) for i in range(1, 5)]
+
+        result = solve_with_dropping(
+            stops=stops,
+            origin_index=0,
+            matrix=self._uniform_matrix(len(stops) + 1),
+            window_start=window_start,
+            window_end=window_end,
+            return_to_origin=False,
+            travel_mode="WALK",
+        )
+        assert result is not None
+        schedule, dropped = result
+        kept = set(schedule.order)
+        assert not kept & {d.candidate_index for d in dropped}
+        assert len(kept) + len(dropped) == len(stops)

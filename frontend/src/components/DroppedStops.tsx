@@ -8,7 +8,12 @@ interface DroppedStopsProps {
 function friendlyReason(code: DiagnosticCode, reasonDetail: string): string {
   switch (code) {
     case 'NO_FEASIBLE_ITINERARY':
-      return 'Adding it would push the day past your end time.';
+      // Deliberately does not name a cause. The solver knows this stop could not
+      // be fitted alongside the others, not which constraint did it: the window,
+      // an opening time, or the travel between them. Claiming "past your end
+      // time" was wrong often enough to be misleading, including on days that
+      // finished hours before their window closed.
+      return 'It could not be fitted around the other stops and their opening times.';
     case 'CLOSED_ON_DATE':
       return 'Closed on the day you asked for.';
     case 'HOURS_UNAVAILABLE':

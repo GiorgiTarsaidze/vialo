@@ -729,3 +729,64 @@ not had it.
 
 553 backend tests, 197 frontend tests, Ruff, strict mypy across 92 source files, ESLint, strict
 TypeScript, and repository validation all pass. Backend and frontend both deployed and verified live.
+
+## 2026-08-21 (later): the greedy dropper was throwing away stops that fitted
+
+Yesterday's Venice run retained 2 stops of 8 in a six-hour window and finished at 11:48, more than
+three hours before the window closed. It was recorded as open rather than investigated. It is a real
+defect and this is the cause.
+
+### Two mechanisms, and a gap between them
+
+`top_up_shortfall` fires on the number of stops that survive **grounding**. Venice grounded 8 against
+a target of 4, so no top-up ran, correctly. The stops were then lost in the **solver**, and nothing
+watches that boundary. The design called the missing piece feasibility backfill and it was never
+built.
+
+### Why greedy dropping loses innocent stops
+
+`solve_with_dropping` removes the least essential stop, re-solves, and repeats until the set fits. It
+never reconsiders. So when one badly constrained stop is the real blocker, every stop removed before
+it is collateral damage, and by the time the blocker is finally dropped the earlier ones are gone and
+nothing asks again whether they would have fitted.
+
+Concretely, for a final set S and drops D1, D2, D3 in that order, the solver tested
+`S ∪ {D1,D2,D3}`, `S ∪ {D2,D3}`, `S ∪ {D3}` and `S`. It never tested `S ∪ {D1}` or `S ∪ {D2}`. Those
+are frequently feasible.
+
+### The fix
+
+A backfill pass in the same pure domain module. Once a feasible set is found, previously dropped
+stops are reconsidered most essential first and kept when the day still solves.
+
+It costs solver time only: no provider call, no model call, no spend, which is what makes it safe to
+add two days from the deadline. A second Bedrock call would not have been, since the deployed function
+already reaches 19.6 s against a 30 s API Gateway budget.
+
+The work is bounded three ways. The final drop is skipped, because it is the drop that made the set
+solvable and re-adding it is provably infeasible. The pass stops once the day reaches its target
+density. Attempts are capped at six. The skip of the final drop also caps the largest possible attempt
+at eight stops rather than nine, so the worst case is about 0.4 s of extra solving.
+
+Live re-test of the exact reported prompt, after deploying: **2 stops became 4**, hitting the target
+density for a six-hour window, and the response status moved from `partial` to `complete`. Campo San
+Polo and Chiesa di San Giacomo di Rialto came back. Church of Saint Cassian stayed dropped, correctly.
+
+The regression test was verified to fail with the backfill disabled before being kept, so it is
+testing the fix rather than the scenario.
+
+### The dropped-stop reason was also lying
+
+`NO_FEASIBLE_ITINERARY` was rendered as "Adding it would push the day past your end time." The solver
+does not know that. It knows the stop could not be fitted alongside the others; whether the binding
+constraint was the window, an opening interval, or travel between stops is not recorded. The claim was
+provably wrong on the Venice day, which ended more than three hours before its window closed.
+
+It now reads "It could not be fitted around the other stops and their opening times", which is what
+the code actually knows. Guessing a specific cause reads as more helpful and is worse, because a user
+who can see their day ending at 11:48 learns that the explanations cannot be trusted.
+
+### Gate
+
+556 backend tests, 197 frontend tests, Ruff, strict mypy across 92 source files, ESLint, strict
+TypeScript, and repository validation all pass. Backend and frontend deployed and verified live.
