@@ -10,6 +10,67 @@ IDs, interprets requested-date opening hours, computes a directed travel-time ma
 retained route exactly, and returns a scheduled timeline with an honest naive-versus-optimized
 comparison. Google Maps is the final handoff, not the scheduling engine.
 
+**Built with Kiro, spec-driven from the first commit, and running entirely on AWS.** Solo entry for
+the Ready, Spec, Ship hackathon. How Kiro was used: [KIRO.md](KIRO.md) and
+[`.kiro/`](.kiro/). Day-by-day record, including what went wrong: [DEVLOG.md](DEVLOG.md).
+
+## How it runs on AWS
+
+Every part of Vialo that is not Google Maps data is AWS. One Lambda serves the whole API, four
+DynamoDB tables hold cache, limits, shares, and the Journal, Bedrock does candidate selection, and
+Cognito is the only identity provider.
+
+```mermaid
+flowchart TB
+    subgraph browser["Browser"]
+        SPA["React 18 + TypeScript SPA<br/>same-origin calls only"]
+    end
+
+    subgraph aws["AWS · us-east-1"]
+        CF["CloudFront<br/>TLS · CSP · SPA rewrite<br/>/api/* proxy · /media/* rewrite"]
+        S3F[("S3 · frontend<br/>private, OAC only")]
+        S3M[("S3 · Journal media<br/>private, OAC only")]
+        APIGW["API Gateway HTTP API<br/>throttled 2 req/s, burst 5"]
+        LAMBDA["Lambda · Python 3.12<br/>ARM64 · 1769 MB · 30 s<br/>deps in a separate layer"]
+        COGNITO["Cognito user pool<br/>hosted UI · PKCE, no secret"]
+        PRESIGN["Lambda · PreSignUp<br/>auto-confirm"]
+        BEDROCK["Bedrock<br/>Claude Sonnet 4.6"]
+        CACHE[("DynamoDB<br/>place cache")]
+        LIMITS[("DynamoDB<br/>rate limits + Bedrock spend")]
+        SHARES[("DynamoDB<br/>anonymous shares, 30-day TTL")]
+        JOURNAL[("DynamoDB<br/>Journal, 3 GSIs")]
+        LOGS["CloudWatch Logs<br/>7-day retention"]
+    end
+
+    subgraph google["Google Maps Platform"]
+        PLACES["Places API"]
+        ROUTES["Routes API"]
+    end
+
+    SPA -->|"HTTPS"| CF
+    CF --> S3F
+    CF --> S3M
+    CF -->|"/api/*"| APIGW
+    APIGW --> LAMBDA
+    SPA -.->|"sign in"| COGNITO
+    COGNITO --> PRESIGN
+    LAMBDA -.->|"verify JWT via JWKS"| COGNITO
+    LAMBDA --> BEDROCK
+    LAMBDA --> CACHE
+    LAMBDA --> LIMITS
+    LAMBDA --> SHARES
+    LAMBDA --> JOURNAL
+    LAMBDA --> LOGS
+    LAMBDA -->|"grounding"| PLACES
+    LAMBDA -->|"matrix + geometry"| ROUTES
+```
+
+Everything above is defined in [`infra/template.yaml`](infra/template.yaml) as one AWS SAM stack with
+explicit least-privilege IAM. Nothing is clicked together by hand. Both buckets are private and
+reachable only through CloudFront with Origin Access Control, Bedrock is called through the Lambda
+execution role rather than an API key, and the request pipeline itself is in
+[Architecture](#architecture) below.
+
 ## Why it exists
 
 On a train to Napoli with one day to spend, we burned the morning planning it by hand: ask a chatbot
