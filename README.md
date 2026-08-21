@@ -341,8 +341,12 @@ The Google Maps browser key is separate and visible in the browser bundle by des
 API. The two `VITE_COGNITO_*` values are also in the bundle by design and are not credentials: the
 Cognito app client has no secret, and its redirect URI is pinned in the user pool, so neither value
 authorizes anything on its own. Never place Bedrock credentials, Google server keys, or HMAC secrets
-in frontend code. A full gitleaks scan of the entire commit history reports no leaks
-([`docs/kiro-evidence/secret-scan.txt`](docs/kiro-evidence/secret-scan.txt)).
+in frontend code. A full gitleaks scan of the entire commit history finds no credential. It does
+report three matches, and all three are deliberate test vectors: an unsigned `alg=none` JWT used to
+prove the API refuses forged tokens, and two frontend test fixtures whose signature segment is the
+literal string `sig`. Each is decoded in full in
+[`docs/kiro-evidence/secret-scan.txt`](docs/kiro-evidence/secret-scan.txt) rather than suppressed
+with an ignore file.
 
 ## Deployment
 

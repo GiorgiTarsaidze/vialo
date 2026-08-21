@@ -790,3 +790,40 @@ who can see their day ending at 11:48 learns that the explanations cannot be tru
 
 556 backend tests, 197 frontend tests, Ruff, strict mypy across 92 source files, ESLint, strict
 TypeScript, and repository validation all pass. Backend and frontend deployed and verified live.
+
+## 2026-08-21 (evening): auditing the evidence folder before submission
+
+Checked `docs/kiro-evidence/` for anything that should not be in a public repository, and for whether
+the claims attached to each artifact are still true.
+
+**Nothing sensitive is in it.** No API keys, no AWS access keys, no session tokens, no private keys,
+no email addresses, no local filesystem paths, no IP addresses, and the two PNG screenshots carry no
+embedded metadata at all. The AWS account id appears three times inside the Journal media bucket
+hostname, which is already public: that hostname is in the `connect-src` directive of the
+Content-Security-Policy header served on every page load, because the browser uploads cover images
+straight to it.
+
+The 33 adversarial prompts in the scope-guard battery are ordinary refusal test vectors and are worth
+publishing rather than hiding; they are the evidence that the guard refuses.
+
+**The secret scan needed re-running and the result changed.** The committed transcript was captured at
+13 commits and reported no leaks. At 19 commits gitleaks reports three, all introduced by my own
+verification work: the unsigned `alg=none` JWT the Journal battery fires at the API to prove forged
+tokens are refused, and two frontend test fixtures whose signature segment is the literal string
+`sig`. None carries a signature and none authenticates anything.
+
+They are documented in the transcript with their decoded contents rather than suppressed with a
+`.gitleaksignore`. An ignore file makes a scan look clean and asks the reader to trust that the
+suppressions were justified. Three decoded payloads let them check in ten seconds. The README claim
+was corrected from "reports no leaks" to what the scan actually reports.
+
+**Two smaller corrections.** The index said large raw captures are kept out of the repository in a
+gitignored `docs/kiro-evidence/raw/`; that directory is gitignored but empty, and nothing ever needed
+it, so it now says so. And the two live-result screenshots were captured on 2026-08-20, before the
+interface work of the 20th and 21st, so they show the dropped-stop section as a red "couldn't fit" box
+and the old header. They are now dated in the index with a note that the interface has since changed
+and the computed result they show is unaffected.
+
+**On the folder name.** Only `hook-runs.txt` is evidence of the Kiro workflow itself. Everything else
+verifies the product that workflow produced: security, reproducibility, solver performance, live
+deployment. The index now says that plainly instead of letting the folder name imply otherwise.
