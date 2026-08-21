@@ -16,7 +16,16 @@ export default function JournalEditor() {
   const location = useLocation();
   const { authenticated, displayName, signIn } = useAuth();
 
-  const passedItinerary = (() => {
+  /**
+   * The day handed over by "Publish this day as a story".
+   *
+   * Held in state with a lazy initialiser so it is read exactly once. As a plain
+   * expression in the render body it consumed the sessionStorage entry on the
+   * first render and then evaluated to null on every render after it, so the
+   * attached route silently disappeared the moment anything re-rendered, which
+   * the daily-allowance fetch does immediately. No story ever carried a route.
+   */
+  const [passedItinerary] = useState<ItineraryResponse | null>(() => {
     const fromState = (location.state as { itinerary?: ItineraryResponse } | null)?.itinerary;
     if (fromState) return fromState;
     try {
@@ -27,7 +36,7 @@ export default function JournalEditor() {
       }
     } catch { /* ignore */ }
     return null;
-  })();
+  });
 
   const [title, setTitle] = useState('');
   const [city, setCity] = useState(passedItinerary?.locality.name ?? '');

@@ -2,7 +2,14 @@
  * Auth hook for Vialo Journal — exposes session state and actions.
  */
 import { useState, useCallback, useEffect } from 'react';
-import { getSession, startSignIn, signOut, isAuthenticated, clearSession } from '../lib/cognito';
+import {
+  getSession,
+  startSignIn,
+  signOut,
+  isAuthenticated,
+  clearSession,
+  subscribeToSession,
+} from '../lib/cognito';
 
 export interface AuthState {
   authenticated: boolean;
@@ -74,18 +81,24 @@ export function useAuth(): AuthState {
     return () => clearInterval(interval);
   }, [authenticated]);
 
-  // Listen for storage events (other tabs)
+  const resync = useCallback(() => {
+    const valid = isAuthenticated();
+    setAuthenticated(valid);
+    setIdentity(valid ? readIdentity() : { userId: null, displayName: null });
+  }, []);
+
+  // Same tab: the auth callback saves a session while this component is already
+  // mounted, and the storage event does not fire for the tab that wrote it.
+  useEffect(() => subscribeToSession(resync), [resync]);
+
+  // Other tabs.
   useEffect(() => {
     const handler = (e: StorageEvent) => {
-      if (e.key === 'vialo.journal.session') {
-        const valid = isAuthenticated();
-        setAuthenticated(valid);
-        setIdentity(valid ? readIdentity() : { userId: null, displayName: null });
-      }
+      if (e.key === 'vialo.journal.session') resync();
     };
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
-  }, []);
+  }, [resync]);
 
   const signIn = useCallback(async (returnPath?: string) => {
     await startSignIn(returnPath);

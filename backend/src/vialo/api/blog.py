@@ -30,7 +30,11 @@ from vialo.services.blog_repository import (
 )
 from vialo.services.media_store import MAX_COVER_BYTES, MediaStore, MediaStoreError
 
-MAX_BODY_BYTES = 64 * 1024
+# A story body is capped at 8000 characters, but a story may carry a full
+# itinerary snapshot: up to nine grounded stops with photos, a timeline, and two
+# encoded route polylines. A real seven-stop day measures about 78 KB, so the
+# original 64 KB ceiling rejected almost every story that had a route attached.
+MAX_BODY_BYTES = 256 * 1024
 
 
 def _json(status_code: int, payload: dict[str, Any]) -> Response:  # type: ignore[type-arg]
@@ -81,11 +85,22 @@ def _author(user: AuthenticatedUser) -> BlogAuthor:
     return BlogAuthor(user_id=user.user_id, display_name=user.display_name)
 
 
+class RequestTooLargeError(Exception):
+    """Raised when a request body exceeds the accepted size."""
+
+
 def _raw_body() -> str:
-    """Return the request body, refusing anything implausibly large."""
+    """Return the request body, refusing anything implausibly large.
+
+    Raises its own error rather than a bare ValueError so the route can report
+    "too large" honestly. Folding it into the schema-validation branch produced
+    "A story needs a title, a city, and at least 50 characters of text" for a
+    request that had all three, which sent anyone debugging it in the wrong
+    direction.
+    """
     body = app.current_event.body or "{}"
     if len(body.encode("utf-8")) > MAX_BODY_BYTES:
-        raise ValueError("Request body too large")
+        raise RequestTooLargeError
     return body
 
 
@@ -134,7 +149,16 @@ def create_post() -> Response:  # type: ignore[type-arg]
         return _error(401, "UNAUTHENTICATED", exc.message)
 
     try:
-        request = CreatePostRequest.model_validate_json(_raw_body())
+        raw = _raw_body()
+    except RequestTooLargeError:
+        return _error(
+            413,
+            "STORY_TOO_LARGE",
+            "That story is too large to publish. Try removing the cover image or the attached day.",
+        )
+
+    try:
+        request = CreatePostRequest.model_validate_json(raw)
     except (ValidationError, ValueError):
         return _error(
             400,
@@ -218,6 +242,8 @@ def create_comment(post_id: str) -> Response:  # type: ignore[type-arg]
 
     try:
         request = CreateCommentRequest.model_validate_json(_raw_body())
+    except RequestTooLargeError:
+        return _error(413, "COMMENT_TOO_LARGE", "That comment is too large")
     except (ValidationError, ValueError):
         return _error(400, "INVALID_INPUT", "A comment needs 1 to 500 characters")
 
@@ -282,7 +308,7 @@ def create_upload_url() -> Response:  # type: ignore[type-arg]
 
     try:
         request = UploadUrlRequest.model_validate_json(_raw_body())
-    except (ValidationError, ValueError):
+    except (RequestTooLargeError, ValidationError, ValueError):
         return _error(400, "INVALID_INPUT", "Cover images must be JPEG, PNG, or WebP")
 
     config = load_blog_config()

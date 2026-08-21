@@ -253,7 +253,7 @@ npm test
 VITE_GOOGLE_MAPS_BROWSER_KEY=replace-with-referrer-restricted-key npm run build
 ```
 
-The release gate passes 551 backend tests and 186 frontend tests, strict mypy and TypeScript, Ruff and
+The release gate passes 553 backend tests and 197 frontend tests, strict mypy and TypeScript, Ruff and
 ESLint, source and transformed SAM validation, an ARM64 layer check, a production Vite build, and
 `npm audit` with zero known vulnerabilities. Ordinary tests mock provider and AWS boundaries and make
 no live provider calls. The fresh-clone transcript in

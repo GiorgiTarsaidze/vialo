@@ -5,6 +5,7 @@ import { useAutocomplete } from '../hooks/use-autocomplete';
 import PlaceAutocomplete from './PlaceAutocomplete';
 import SelectionMap from './SelectionMap';
 import LoadingPipeline from './LoadingPipeline';
+import PromptError from './PromptError';
 
 const MAX_CHARS = 500;
 
@@ -205,6 +206,9 @@ export default function InputHero({ onSubmit, loading, error }: InputHeroProps) 
   };
 
   const handleExampleClick = (text: string) => {
+    // Examples and error suggestions are both free text, so switch to that tab
+    // rather than silently filling a field the user cannot see.
+    setMode('free');
     setValue(text);
     textareaRef.current?.focus();
   };
@@ -342,14 +346,12 @@ export default function InputHero({ onSubmit, loading, error }: InputHeroProps) 
           )}
 
           {error && (
-            <div className="input-error" role="alert">
-              {error.message}
-              {retryRemainingMs > 0 && (
-                <span className="retry-countdown">
-                  {' '}Retry available in {formatRetryTime(retryRemainingMs)}.
-                </span>
-              )}
-            </div>
+            <PromptError
+              error={error}
+              retryRemainingMs={retryRemainingMs}
+              formatRetryTime={formatRetryTime}
+              onUseSuggestion={handleExampleClick}
+            />
           )}
 
           <button
@@ -705,15 +707,6 @@ const styles = `
 
 .char-count--error {
   color: var(--color-danger);
-}
-
-.input-error {
-  font-size: 14px;
-  color: var(--color-danger);
-  background: var(--color-danger-soft);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-input);
-  text-align: left;
 }
 
 .submit-button {

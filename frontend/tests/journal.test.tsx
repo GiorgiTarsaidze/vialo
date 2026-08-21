@@ -30,6 +30,7 @@ vi.mock('../src/lib/journal-client', () => ({
 
 // --- Mock cognito ---
 vi.mock('../src/lib/cognito', () => ({
+  subscribeToSession: vi.fn(() => () => {}),
   getSession: vi.fn(() => null),
   getIdToken: vi.fn(() => null),
   saveSession: vi.fn(),

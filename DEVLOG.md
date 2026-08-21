@@ -643,3 +643,89 @@ Deployed and verified on desktop at 1568 px.
 **Not verified this pass:** the mobile viewport. The browser window would not resize below the
 desktop width in this environment, so the responsive CSS for these surfaces is written but has not
 been seen rendering at 360 or 390 px. That is an open check, not a completed one.
+
+## 2026-08-21: Three defects behind one feature, and errors that say what to do
+
+Seeding the Journal with real content turned into a bug hunt. Publishing a story with its route
+attached had never worked, and it took three separate fixes to make the first one land.
+
+### The route never survived to the submit button
+
+`JournalEditor` computed `passedItinerary` as a plain expression in the render body. It read the
+handed-over day out of `sessionStorage` and deleted the entry in the same breath, so the first render
+returned the itinerary and every render after it returned `null`. The daily-allowance fetch resolves
+almost immediately and triggers exactly that re-render, so the attached day disappeared a few hundred
+milliseconds after the editor opened.
+
+The panel showing "Your computed day" vanished with it, silently, and the submitted payload carried
+no route. **No story published through "Publish this day as a story" had ever contained one.** Now
+held in `useState` with a lazy initialiser. The regression test renders the editor, waits for the
+allowance to arrive, and asserts the day is still attached, because that wait is precisely what broke
+it.
+
+### Then the request was too big
+
+With the route finally reaching the API, every attempt returned 400 "A story needs a title, a city,
+and at least 50 characters of text" for a request that had all three. `_raw_body()` capped bodies at
+64 KB and raised a bare `ValueError`, which the route caught in the same `except` as schema failures
+and reported as a schema failure.
+
+A real seven-stop Naples day serialises to about 78 KB: nine grounded stops carry photos and
+addresses, and the comparison carries two encoded polylines. The cap was rejecting almost every story
+that had a route. It is now 256 KB, and oversize raises its own error so the route can answer
+`413 STORY_TOO_LARGE` and say what to remove. The misleading message was the expensive part: it sent
+the investigation at the text fields, which were fine.
+
+This one was only reachable because the first bug was fixed. It had been sitting behind it.
+
+### The header did not notice you signing in
+
+Reported from the outside: after completing the Cognito callback the header still offered "Sign in"
+until the page was reloaded by hand. `useAuth` listened for the `storage` event, which by design does
+not fire in the tab that performed the write, so the already-mounted header never learned a session
+existed. `cognito.ts` now keeps a subscriber set that `saveSession` and `clearSession` notify, and
+`useAuth` resyncs from it. The cross-tab listener stays for what it was actually for.
+
+### Errors that explain themselves
+
+Both defects above were reported by a message that named a symptom and left the reader to guess the
+cause, which is the same complaint the product had about its own planning errors. "Could not resolve
+the requested starting point unambiguously" is accurate and nearly useless unless you already know
+the pipeline needs one unambiguous origin.
+
+`PromptError` replaces the one-line red strip. Every diagnostic code now carries a plain headline, an
+explanation of the cause, and concrete next steps, and where a better prompt is the fix the
+suggestions are clickable and load straight into the input. The server's own message and code stay
+visible at the foot of the panel rather than being replaced, so the authoritative text is never
+hidden.
+
+The panel is also colour-coded by kind, which matters more than it sounds. A refused prompt is not a
+failure: the scope guard doing its job is a boundary, and dressing it in danger red teaches people
+that the product is broken when it is working. Refusals are warm, input problems are plum, genuine
+outages are the only ones that get danger styling. A test asserts a refusal never renders as a fault.
+
+### Seeded the Journal
+
+Four stories with real computed routes and cover images: Naples, Venice, Tbilisi, London. Each was
+generated on the live site and written from what the run actually produced, so every attached
+timeline and map is genuine rather than composed.
+
+Two of them are honest about small savings, which is the point. London came back "best order
+confirmed" with naive and optimised identical at 2.6 km, because the South Bank is a line and there
+is nothing to reorder. Venice fitted only 2 of 8 stops in six hours. Tbilisi is the showcase: 9.1 km
+and a missed closing time in the suggested order, 5.5 km and everything fitting once solved.
+
+Covers are Wikimedia Commons images under free licences, cropped to 3:2, metadata stripped, each
+credited to its photographer at the foot of the story.
+
+### Still open
+
+Venice fitting only 2 stops in a six-hour window, and finishing at 11:48 with three hours unused, does
+not look right. One dropped stop was reported as "adding it would push the day past your end time"
+when the day ended more than three hours before the window did. That deserves investigation and has
+not had it.
+
+### Gate
+
+553 backend tests, 197 frontend tests, Ruff, strict mypy across 92 source files, ESLint, strict
+TypeScript, and repository validation all pass. Backend and frontend both deployed and verified live.

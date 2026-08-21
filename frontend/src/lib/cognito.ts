@@ -67,16 +67,40 @@ export function getIdToken(): string | null {
   return getSession()?.idToken ?? null;
 }
 
+/**
+ * Same-tab session subscribers.
+ *
+ * The `storage` event only fires in *other* tabs, so without this a component
+ * that mounted before sign-in never learns that a session now exists. That is
+ * what left the header showing "Sign in" after a successful callback until the
+ * page was reloaded by hand.
+ */
+type SessionListener = () => void;
+const sessionListeners = new Set<SessionListener>();
+
+export function subscribeToSession(listener: SessionListener): () => void {
+  sessionListeners.add(listener);
+  return () => {
+    sessionListeners.delete(listener);
+  };
+}
+
+function notifySessionChanged(): void {
+  sessionListeners.forEach((listener) => listener());
+}
+
 export function saveSession(idToken: string, expiresIn: number): void {
   const session: Session = {
     idToken,
     expiresAt: Date.now() + expiresIn * 1000,
   };
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  notifySessionChanged();
 }
 
 export function clearSession(): void {
   localStorage.removeItem(SESSION_KEY);
+  notifySessionChanged();
 }
 
 export function isAuthenticated(): boolean {

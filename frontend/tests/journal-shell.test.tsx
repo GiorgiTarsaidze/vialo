@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -28,6 +28,7 @@ vi.mock('../src/lib/journal-client', () => ({
 }));
 
 vi.mock('../src/lib/cognito', () => ({
+  subscribeToSession: vi.fn(() => () => {}),
   getSession: vi.fn(() => null),
   getIdToken: vi.fn(() => null),
   saveSession: vi.fn(),
@@ -40,8 +41,8 @@ vi.mock('../src/lib/cognito', () => ({
   getRedirectUri: vi.fn(() => 'http://localhost:3000/auth/callback'),
 }));
 
-import { fetchPosts } from '../src/lib/journal-client';
-import { getSession, isAuthenticated, signOut } from '../src/lib/cognito';
+import { fetchPosts, fetchMe } from '../src/lib/journal-client';
+import { getSession, isAuthenticated, signOut, subscribeToSession } from '../src/lib/cognito';
 import { displayNameFromClaims } from '../src/hooks/use-auth';
 
 const mockFetchPosts = fetchPosts as ReturnType<typeof vi.fn>;
@@ -324,5 +325,100 @@ describe('JournalLanding city filter', () => {
     await waitFor(() => {
       expect(screen.getByText('No stories from Naples yet')).toBeInTheDocument();
     });
+  });
+});
+
+
+describe('session changes reach an already-mounted header', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsAuthenticated.mockReturnValue(false);
+    mockGetSession.mockReturnValue(null);
+  });
+
+  it('subscribes to same-tab session changes', async () => {
+    const { default: AppShell } = await import('../src/components/AppShell');
+    render(
+      <MemoryRouter>
+        <AppShell onNewDay={vi.fn()} showBack={false}>
+          <div>Content</div>
+        </AppShell>
+      </MemoryRouter>,
+    );
+    // Without this subscription the header keeps showing "Sign in" after a
+    // successful auth callback, because the storage event does not fire in the
+    // tab that wrote the session.
+    expect(subscribeToSession).toHaveBeenCalled();
+  });
+
+  it('re-reads the session when the subscription fires', async () => {
+    const sub = subscribeToSession as ReturnType<typeof vi.fn>;
+    let notify = () => {};
+    sub.mockImplementation((fn: () => void) => {
+      notify = fn;
+      return () => {};
+    });
+
+    const { default: AppShell } = await import('../src/components/AppShell');
+    render(
+      <MemoryRouter>
+        <AppShell onNewDay={vi.fn()} showBack={false}>
+          <div>Content</div>
+        </AppShell>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+
+    mockIsAuthenticated.mockReturnValue(true);
+    mockGetSession.mockReturnValue({
+      idToken: tokenWith({ sub: 'user-1', email: 'demo@vialo.place' }),
+      expiresAt: Date.now() + 3_600_000,
+    });
+    await act(async () => { notify(); });
+
+    expect(screen.getByRole('button', { name: /Signed in as demo/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
+  });
+});
+
+describe('JournalEditor keeps the handed-over day', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsAuthenticated.mockReturnValue(true);
+    mockGetSession.mockReturnValue({
+      idToken: tokenWith({ sub: 'user-1', email: 'demo@vialo.place' }),
+      expiresAt: Date.now() + 3_600_000,
+    });
+    sessionStorage.clear();
+  });
+
+  it('survives the re-render caused by the allowance fetch', async () => {
+    const itinerary = {
+      locality: { name: 'Naples' },
+      window: { localStart: '10:00', localEnd: '18:00' },
+      stops: [{ name: 'a' }, { name: 'b' }, { name: 'c' }],
+    };
+    sessionStorage.setItem('vialo.journal.draft_itinerary', JSON.stringify(itinerary));
+    (fetchMe as ReturnType<typeof vi.fn>).mockResolvedValue({
+      author: { userId: 'user-1', displayName: 'demo' },
+      posts: [],
+      postsRemainingToday: 5,
+    });
+
+    const { default: JournalEditor } = await import('../src/components/JournalEditor');
+    render(
+      <MemoryRouter>
+        <JournalEditor />
+      </MemoryRouter>,
+    );
+
+    // Reading sessionStorage in the render body consumed the entry on the first
+    // render and returned null on every render after it, so the attached route
+    // vanished as soon as the allowance arrived and no story carried a route.
+    await waitFor(() => {
+      expect(screen.getByText('5 left today')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Your computed day')).toBeInTheDocument();
+    expect(screen.getByLabelText('Attach this day to the story')).toBeChecked();
   });
 });

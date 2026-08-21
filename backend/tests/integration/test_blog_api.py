@@ -222,6 +222,45 @@ class TestJournalWrites:
         assert response["statusCode"] == 400
         assert json.loads(response["body"])["error"]["code"] == "INVALID_INPUT"
 
+    def test_a_story_carrying_a_real_itinerary_is_accepted(self) -> None:
+        """A day snapshot is tens of kilobytes; the cap must leave room for one.
+
+        The original 64 KB ceiling rejected a real seven-stop day at about 78 KB,
+        and reported it as a missing title. Nobody hit it because a separate
+        frontend defect meant no itinerary ever reached this route.
+        """
+        _create_infrastructure()
+        big = {"title": "A day in Naples", "city": "Naples", "body": VALID_BODY}
+        # Stand in for the snapshot with a payload of the same order of size.
+        big["filler"] = "x" * 90_000
+        with _as_user():
+            response = lambda_handler(
+                _event("POST", "/api/blog/posts", big, {"authorization": "Bearer t"}),
+                _context(),
+            )
+        # Rejected on schema (unknown key), never on size: the size gate is past.
+        assert response["statusCode"] == 400
+        assert json.loads(response["body"])["error"]["code"] == "INVALID_INPUT"
+
+    def test_an_oversized_story_is_reported_as_oversized(self) -> None:
+        _create_infrastructure()
+        payload = {
+            "title": "A day in Naples",
+            "city": "Naples",
+            "body": VALID_BODY,
+            "filler": "x" * (300 * 1024),
+        }
+        with _as_user():
+            response = lambda_handler(
+                _event("POST", "/api/blog/posts", payload, {"authorization": "Bearer t"}),
+                _context(),
+            )
+        assert response["statusCode"] == 413
+        body = json.loads(response["body"])
+        assert body["error"]["code"] == "STORY_TOO_LARGE"
+        # The old behaviour blamed the title, city, and body, all of which were present.
+        assert "title" not in body["error"]["message"]
+
     def test_cover_key_belonging_to_another_author_is_refused(self) -> None:
         _create_infrastructure()
         with _as_user("user-1"):

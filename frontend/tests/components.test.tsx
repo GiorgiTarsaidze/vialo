@@ -173,7 +173,10 @@ describe('InputHero', () => {
       />,
     );
     await user.type(screen.getByRole('textbox', { name: /Describe your day/ }), 'Venice walking day');
-    expect(screen.getByRole('alert')).toHaveTextContent('Retry available in 2m 0s');
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Try again in 2m 0s');
+    // The panel explains why the limit exists, not just that it was hit.
+    expect(alert).toHaveTextContent('five planned days per hour');
     expect(screen.getByRole('button', { name: /Build my day/ })).toBeDisabled();
   });
 
